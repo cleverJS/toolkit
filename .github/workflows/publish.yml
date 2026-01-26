@@ -1,0 +1,142 @@
+name: Release Package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Validate (install, typecheck, test, build)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_db
+          POSTGRES_PASSWORD: test_db
+          POSTGRES_DB: test_db
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+      - name: Install dependencies (immutable)
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit -p tsconfig.build.json
+      - name: Run tests
+        run: pnpm run tests
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
+          POSTGRES_USER: test_db
+          POSTGRES_PASSWORD: test_db
+          POSTGRES_DB: test_db
+      - name: Build package
+        run: pnpm run build
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  publish-gpr:
+    name: Publish to GitHub Packages
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write  # Required for provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'pnpm'
+          registry-url: https://npm.pkg.github.com/
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Install dependencies (immutable)
+        run: pnpm install --frozen-lockfile --prod
+      - name: Verify tag matches package version
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Strip 'v' prefix if present (e.g., v1.0.0 -> 1.0.0)
+          # Both formats are supported: v1.0.0 or 1.0.0
+          if [[ "$TAG" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+(-.+)?)$ ]]; then
+            VERSION_IN_TAG="${BASH_REMATCH[1]}"
+          else
+            echo "❌ Release tag '$TAG' does not match semver format." >&2
+            echo "Expected format: 1.0.0 or v1.0.0 (with optional pre-release suffix)" >&2
+            exit 1
+          fi
+          VERSION_IN_PKG=$(node -p "require('./package.json').version")
+          echo "📌 Tag version: $VERSION_IN_TAG"
+          echo "📦 Package.json version: $VERSION_IN_PKG"
+          if [ "$VERSION_IN_TAG" != "$VERSION_IN_PKG" ]; then
+            echo "❌ Tag version and package.json version mismatch." >&2
+            exit 1
+          fi
+          echo "✅ Version verification passed"
+      - name: Dry run publish
+        if: inputs.dry_run == true
+        run: |
+          echo "🔍 Dry run mode - skipping actual publish"
+          pnpm publish --dry-run --no-git-checks --ignore-scripts
+        env:
+          NODE_ENV: production
+      - name: Publish to GitHub Packages
+        if: inputs.dry_run != true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_ENV: production
+        run: |
+          echo "📦 Publishing to GitHub Packages..."
+          pnpm publish --tag=latest --access public --no-git-checks --provenance --ignore-scripts
