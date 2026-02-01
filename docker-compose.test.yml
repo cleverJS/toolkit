@@ -1,8 +1,6 @@
-version: '3.8'
-
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: cleverjs-test-postgres
     environment:
       POSTGRES_USER: test_db
@@ -10,14 +8,24 @@ services:
       POSTGRES_DB: test_db
     ports:
       - "5433:5432"
-    volumes:
-      - postgres_test_data:/var/lib/postgresql/data
+    tmpfs:
+      - /var/lib/postgresql
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=64MB
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_db"]
-      interval: 5s
-      timeout: 5s
+      interval: 2s
+      timeout: 2s
       retries: 5
-
-volumes:
-  postgres_test_data:
+      start_period: 5s
 

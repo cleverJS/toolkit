@@ -15,6 +15,13 @@ concurrency:
   group: release-package-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: 24
+  PNPM_VERSION: 10
+  POSTGRES_USER: test_db
+  POSTGRES_PASSWORD: test_db
+  POSTGRES_DB: test_db
+
 jobs:
   test:
     name: Validate (install, typecheck, test, build)
@@ -24,11 +31,11 @@ jobs:
       packages: read
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
-          POSTGRES_USER: test_db
-          POSTGRES_PASSWORD: test_db
-          POSTGRES_DB: test_db
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ env.POSTGRES_DB }}
         ports:
           - 5433:5432
         options: >-
@@ -40,26 +47,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
+          version: ${{ env.PNPM_VERSION }}
           run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
-      - uses: actions/cache@v4
-        name: Setup pnpm cache
-        with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
       - name: Install dependencies (immutable)
         run: pnpm install --frozen-lockfile
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Typecheck
         run: pnpm exec tsc --noEmit -p tsconfig.build.json
       - name: Run tests
@@ -67,9 +64,6 @@ jobs:
         env:
           POSTGRES_HOST: localhost
           POSTGRES_PORT: 5433
-          POSTGRES_USER: test_db
-          POSTGRES_PASSWORD: test_db
-          POSTGRES_DB: test_db
       - name: Build package
         run: pnpm run build
       - name: Upload build artifacts
@@ -86,26 +80,10 @@ jobs:
     permissions:
       packages: write
       contents: read
-      id-token: write  # Required for provenance
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: 'pnpm'
-          registry-url: https://npm.pkg.github.com/
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - name: Install dependencies (immutable)
-        run: pnpm install --frozen-lockfile --prod
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify tag matches package version
         if: github.event_name == 'release'
         shell: bash
@@ -128,12 +106,49 @@ jobs:
             exit 1
           fi
           echo "✅ Version verification passed"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          registry-url: https://npm.pkg.github.com/
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Verify build artifacts
+        run: |
+          if [ ! -d "dist" ] || [ -z "$(ls -A dist)" ]; then
+            echo "❌ Build artifacts missing or empty" >&2
+            exit 1
+          fi
+          echo "✅ Build artifacts verified"
+      - name: Install dependencies (immutable)
+        run: pnpm install --frozen-lockfile --prod
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Determine npm tag
+        id: npm-tag
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-* ]]; then
+            echo "tag=next" >> $GITHUB_OUTPUT
+            echo "📌 Pre-release version detected, using 'next' tag"
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "📌 Stable version detected, using 'latest' tag"
+          fi
       - name: Dry run publish
         if: inputs.dry_run == true
         run: |
           echo "🔍 Dry run mode - skipping actual publish"
           pnpm publish --dry-run --no-git-checks --ignore-scripts
         env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_ENV: production
       - name: Publish to GitHub Packages
         if: inputs.dry_run != true
@@ -142,4 +157,4 @@ jobs:
           NODE_ENV: production
         run: |
           echo "📦 Publishing to GitHub Packages..."
-          pnpm publish --tag=latest --access public --no-git-checks --provenance --ignore-scripts
+          pnpm publish --tag=${{ steps.npm-tag.outputs.tag }} --access public --no-git-checks --provenance --ignore-scripts

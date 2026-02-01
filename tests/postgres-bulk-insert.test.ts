@@ -10,25 +10,25 @@ import { IMapper, MikroRepository, PostgresBulkInsertStrategy } from '../src'
 @Entity({ tableName: 'test_products' })
 class ProductEntity extends BaseEntity {
   @PrimaryKey({ autoincrement: true })
-  id?: number
+  public id?: number
 
   @Property()
-  name: string = ''
+  public name: string = ''
 
   @Property({ type: 'float' })
-  price: number
+  public price: number = 0
 
   @Property({ fieldName: 'created_at' })
-  createdAt: Date
+  public createdAt: Date = new Date()
 
   @Property({ nullable: true })
-  description?: string
+  public description?: string
 
   @Property({ fieldName: 'is_active', default: true })
-  isActive: boolean
+  public isActive: boolean = false
 
   @Property({ type: 'json', nullable: true })
-  metadata?: Record<string, any>
+  public metadata?: Record<string, any>
 }
 
 // Domain Entity
