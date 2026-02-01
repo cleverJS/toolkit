@@ -28,6 +28,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     services:
       postgres:
         image: postgres:18-alpine
@@ -51,8 +53,6 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies (immutable)
         run: pnpm install --frozen-lockfile
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Typecheck
         run: pnpm exec tsc --noEmit -p tsconfig.build.json
       - name: Run tests
@@ -78,6 +78,9 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NODE_ENV: production
     steps:
       - uses: actions/checkout@v4
       - name: Verify tag matches package version
@@ -122,8 +125,6 @@ jobs:
           echo "✅ Build artifacts verified"
       - name: Install dependencies (immutable)
         run: pnpm install --frozen-lockfile --prod
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Determine npm tag
         id: npm-tag
         run: |
@@ -140,14 +141,8 @@ jobs:
         run: |
           echo "🔍 Dry run mode - skipping actual publish"
           pnpm publish --dry-run --no-git-checks --ignore-scripts
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_ENV: production
       - name: Publish to GitHub Packages
         if: inputs.dry_run != true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_ENV: production
         run: |
           echo "📦 Publishing to GitHub Packages..."
           pnpm publish --tag=${{ steps.npm-tag.outputs.tag }} --access public --no-git-checks --provenance --ignore-scripts
