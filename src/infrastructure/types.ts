@@ -1,4 +1,4 @@
-import { Condition } from '@cleverjs/condition-builder'
+import { Condition } from '@cleverJS/condition-builder'
 
 import { Paginator } from '../utils/Paginator'
 
