@@ -17,7 +17,6 @@ concurrency:
 
 env:
   NODE_VERSION: 24
-  PNPM_VERSION: 10
   POSTGRES_USER: test_db
   POSTGRES_PASSWORD: test_db
   POSTGRES_DB: test_db
@@ -46,9 +45,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -107,9 +103,6 @@ jobs:
           fi
           echo "✅ Version verification passed"
       - uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
