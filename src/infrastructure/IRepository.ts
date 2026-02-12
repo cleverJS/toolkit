@@ -6,7 +6,6 @@ import { PropertySchema } from '../utils/types/types'
 import { IFindAll, IFindAllWithSelect } from './types'
 
 export interface IRepository<DomainEntity = any, PrimaryKey extends keyof DomainEntity = never> {
-  readonly mapper: IMapper<DomainEntity, any>
   readonly primary?: string[]
 
   findOne(condition: Condition): Promise<DomainEntity | null>

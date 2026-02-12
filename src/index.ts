@@ -4,6 +4,7 @@ export { AbstractApplicationService } from './application/AbstractApplication.se
 // Infrastructure Layer
 export { IRepository, IMapper, IBulkOption } from './infrastructure/IRepository'
 export { MikroRepository } from './infrastructure/Mikro.repository'
+export { KnexRepository, IKnexRepositoryConfig } from './infrastructure/Knex.repository'
 export { IFindAll, IFindAllWithSelect, ISort } from './infrastructure/types'
 
 // Bulk Insert Strategies

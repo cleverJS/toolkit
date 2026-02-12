@@ -1,0 +1,307 @@
+import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverJS/condition-builder'
+import { Knex } from 'knex'
+import { PassThrough, Transform } from 'stream'
+
+import { removeUndefined } from '../utils/helpers/object'
+import { peekAndReplayStream } from '../utils/helpers/streams'
+import { Paginator } from '../utils/Paginator'
+import { PropertySchema } from '../utils/types/types'
+
+import { FallbackBulkInsertStrategy, IBulkInsertStrategy } from './bulk-insert'
+import { IBulkOption, IMapper, IRepository } from './IRepository'
+import { IFindAll, IFindAllWithSelect } from './types'
+
+export interface IKnexRepositoryConfig {
+  table: string
+  primary?: string[]
+  bulkInsertStrategy?: IBulkInsertStrategy
+}
+
+export class KnexRepository<
+  DBEntity extends Record<string, unknown>,
+  DomainEntity,
+  TPrimaryKey extends keyof DomainEntity = never,
+> implements IRepository<DomainEntity, TPrimaryKey> {
+  public readonly primary?: string[]
+
+  public constructor(
+    protected readonly knex: Knex,
+    protected readonly mapper: IMapper<DomainEntity, DBEntity>,
+    protected readonly config: IKnexRepositoryConfig
+  ) {
+    this.primary = config.primary
+  }
+
+  public async count(condition?: Condition): Promise<number> {
+    const qb = this.knex(this.config.table).count('* as count')
+    this.#applyCondition(qb, condition)
+    const result = await qb.first()
+    return Number((result as Record<string, unknown>)?.count ?? 0)
+  }
+
+  public async delete(condition: Condition): Promise<number> {
+    const qb = this.knex(this.config.table).delete()
+    this.#applyCondition(qb, condition)
+    return qb
+  }
+
+  public async findAll(payload: IFindAll = {}): Promise<DomainEntity[]> {
+    const { condition, paginator, sort } = payload
+
+    if (paginator && paginator.getLimit() > 1 && !sort) {
+      throw new Error('Sort is required when paginator is used')
+    }
+
+    const qb = this.knex(this.config.table).select('*')
+
+    this.#applyCondition(qb, condition)
+    this.#applySort(qb, sort)
+    this.#applyPaginator(qb, paginator)
+
+    const items = await qb
+    return (items as DBEntity[]).map((i) => this.mapper.toDomain(i))
+  }
+
+  public async findPartial<R>(payload: IFindAllWithSelect): Promise<R[]> {
+    const { condition, paginator, sort, select } = payload
+
+    if (paginator && paginator.getLimit() > 1 && !sort) {
+      throw new Error('Sort is required when paginator is used')
+    }
+
+    const qb = this.knex(this.config.table).select(select)
+
+    this.#applyCondition(qb, condition)
+    this.#applySort(qb, sort)
+    this.#applyPaginator(qb, paginator)
+
+    const items = await qb
+    return items as R[]
+  }
+
+  public async findOne(condition: Condition): Promise<DomainEntity | null> {
+    const paginator = new Paginator()
+    paginator.setItemsPerPage(1)
+
+    const defaultSort = this.primary?.length ? { [this.primary[0]]: 'asc' as const } : undefined
+    const items = await this.findAll({ condition, paginator, sort: defaultSort })
+
+    return items.length ? items[0] : null
+  }
+
+  public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
+    const entity = this.mapper.toEntity(data as DomainEntity)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const [inserted] = await this.knex(this.config.table)
+      .insert(entity as Record<string, unknown>)
+      .returning('*')
+
+    return this.mapper.toDomain(inserted as DBEntity)
+  }
+
+  public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
+    const updateEntity = this.mapper.toPersistence(data)
+    const cleanedEntity = removeUndefined(updateEntity as Record<string, unknown>)
+
+    const qb = this.knex(this.config.table).select('*')
+    this.#applyCondition(qb, condition)
+    qb.limit(2)
+
+    const items = await qb
+
+    if (!items.length) {
+      throw new Error('Entity to update not found')
+    }
+
+    if (items.length > 1) {
+      throw new Error('Multiple entities found for update')
+    }
+
+    const item = items[0] as DBEntity
+    const primaryCondition = this.#buildPrimaryCondition(item)
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const [updated] = await this.knex(this.config.table).update(cleanedEntity).where(primaryCondition).returning('*')
+
+    return this.mapper.toDomain(updated as DBEntity)
+  }
+
+  public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
+    const updateEntity = this.mapper.toPersistence(data)
+    const cleanedEntity = removeUndefined(updateEntity as Record<string, unknown>)
+
+    const qb = this.knex(this.config.table).update(cleanedEntity)
+    this.#applyCondition(qb, condition)
+    return qb
+  }
+
+  public async insertMany<R = unknown[]>(items: Omit<DomainEntity, TPrimaryKey>[]): Promise<R> {
+    if (!items.length) {
+      return [] as R
+    }
+
+    const entities = items.map((i) => this.mapper.toEntity(i as DomainEntity) as Record<string, unknown>)
+    const result = await this.knex(this.config.table).insert(entities).returning('*')
+
+    return result as R
+  }
+
+  public async query<R = Record<string, unknown>>(sql: string, binding?: unknown[]): Promise<R | null> {
+    const result: { rows: R } = binding ? await this.knex.raw(sql, binding) : await this.knex.raw(sql)
+    return result.rows
+  }
+
+  public stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R> {
+    const { select, paginator, condition, sort } = payload
+
+    const qb = this.knex(this.config.table).select(select)
+
+    if (paginator) {
+      if (!sort) {
+        throw new Error('Sort is required when paginator is used')
+      }
+      this.#applyPaginator(qb, paginator)
+    }
+
+    this.#applySort(qb, sort)
+    this.#applyCondition(qb, condition)
+
+    const transformToDomain = this.#createDomainTransform()
+    return qb.stream().pipe(transformToDomain) as PassThrough & AsyncIterable<R>
+  }
+
+  public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>, options?: IBulkOption): Promise<number> {
+    let first: DomainEntity
+    let replayStream: PassThrough
+
+    try {
+      const result = await peekAndReplayStream<DomainEntity>(stream)
+      first = result.first
+      replayStream = result.replayStream
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Stream is empty') {
+        return 0
+      }
+      throw error
+    }
+
+    if (!first) {
+      return 0
+    }
+
+    const mapping = this.#buildFieldMapping(first, options)
+    const entityStream = this.#createEntityStream(replayStream)
+
+    const strategy = this.config.bulkInsertStrategy ?? new FallbackBulkInsertStrategy()
+    return strategy.execute(this.knex as never, entityStream, {
+      table: this.config.table,
+      objectToDBmapping: mapping,
+    })
+  }
+
+  public async truncate(): Promise<void> {
+    await this.knex.raw('TRUNCATE TABLE ??', [this.config.table])
+  }
+
+  #applyCondition(qb: Knex.QueryBuilder, condition?: Condition): void {
+    if (condition == null) {
+      return
+    }
+
+    const serializer = ConditionAdapterRegistry.getInstance().getSerializer<KnexConditionApplier>(AdapterType.KNEX)
+    const applier = serializer.serialize(condition)
+    applier(qb)
+  }
+
+  #applySort(qb: Knex.QueryBuilder, sort?: Record<string, 'asc' | 'desc'>): void {
+    if (!sort) {
+      return
+    }
+    for (const [field, dir] of Object.entries(sort)) {
+      qb.orderBy(field, dir)
+    }
+  }
+
+  #applyPaginator(qb: Knex.QueryBuilder, paginator?: Paginator): void {
+    if (!paginator) {
+      return
+    }
+    if (paginator.getLimit()) {
+      qb.limit(paginator.getLimit())
+    }
+    if (paginator.getOffset()) {
+      qb.offset(paginator.getOffset())
+    }
+  }
+
+  #buildPrimaryCondition(item: DBEntity): Record<string, unknown> {
+    if (!this.primary?.length) {
+      throw new Error('Primary key is required for updateOne')
+    }
+
+    const condition: Record<string, unknown> = {}
+    for (const key of this.primary) {
+      condition[key] = item[key]
+    }
+    return condition
+  }
+
+  #buildFieldMapping(item: DomainEntity, options?: IBulkOption): Record<string, string> {
+    const dbEntity = this.mapper.toEntity(item)
+
+    let domainToEntityMap = options?.domainToEntityMap
+    if (domainToEntityMap == null) {
+      const mapping: Record<string, string> = {}
+      for (const key of Object.keys(dbEntity as object)) {
+        const value = (dbEntity as Record<string, unknown>)[key]
+        if (typeof value !== 'function') {
+          mapping[key] = key
+        }
+      }
+      domainToEntityMap = mapping
+    }
+
+    const mapping: Record<string, string> = {}
+    for (const [key, dbColumn] of Object.entries(domainToEntityMap)) {
+      if (Object.prototype.hasOwnProperty.call(dbEntity, key)) {
+        mapping[key] = dbColumn
+      }
+    }
+
+    return mapping
+  }
+
+  #createDomainTransform(): Transform {
+    const mapper = this.mapper
+
+    return new Transform({
+      objectMode: true,
+      transform(rawRow: Record<string, unknown>, _encoding, callback) {
+        try {
+          const domain = mapper.toDomain(rawRow as DBEntity)
+          callback(null, domain)
+        } catch (err) {
+          callback(err as Error)
+        }
+      },
+    })
+  }
+
+  #createEntityStream(stream: PassThrough & AsyncIterable<DomainEntity>): PassThrough & AsyncIterable<DBEntity> {
+    const mapper = this.mapper
+
+    const transform = new Transform({
+      objectMode: true,
+      transform(chunk: DomainEntity, _encoding, callback) {
+        try {
+          const entity = mapper.toEntity(chunk)
+          callback(null, entity)
+        } catch (error) {
+          callback(error as Error)
+        }
+      },
+    })
+
+    return stream.pipe(transform) as PassThrough & AsyncIterable<DBEntity>
+  }
+}

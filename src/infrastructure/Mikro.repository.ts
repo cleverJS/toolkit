@@ -25,7 +25,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   public constructor(
     protected readonly repository: EntityRepository<DBEntity>,
-    public readonly mapper: IMapper<DomainEntity, DBEntity>
+    protected readonly mapper: IMapper<DomainEntity, DBEntity>
   ) {
     const meta = repository.getEntityManager().getMetadata().get(repository.getEntityName())
     this.primary = meta.primaryKeys

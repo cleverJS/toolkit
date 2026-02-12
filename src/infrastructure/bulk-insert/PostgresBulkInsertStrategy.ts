@@ -32,7 +32,7 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy {
     let rowCount = 0
 
     try {
-      const sql = `COPY ${table} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
+      const sql = `COPY "${table}" (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
       const copyStream = connection.query(from(sql))
 
       // Transform stream and count rows

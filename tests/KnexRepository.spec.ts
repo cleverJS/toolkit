@@ -1,68 +1,74 @@
-import {
-  AdapterType,
-  Condition,
-  ConditionAdapterRegistry,
-  ConditionBuilder,
-  KnexConditionAdapter,
-  MikroOrmConditionAdapter,
-} from '@cleverJS/condition-builder'
-import { BaseEntity, Entity, EntityManager, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
-import { PostgreSqlDriver } from '@mikro-orm/postgresql'
+import { AdapterType, Condition, ConditionAdapterRegistry, ConditionBuilder, KnexConditionAdapter } from '@cleverJS/condition-builder'
+import knex, { Knex } from 'knex'
 import { PropertySchema } from 'src/utils/types/types'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IMapper, MikroRepository } from '../src'
-import { Paginator } from '../src/utils/Paginator'
+import { IMapper, KnexRepository, Paginator } from '../src'
 
-describe('MikroRepository', () => {
-  let orm: MikroORM
-  let em: EntityManager
-  let repository: MikroRepository<UserEntity, User>
-  let repositoryJob: MikroRepository<JobEntity, Job, 'id'>
+describe('KnexRepository', () => {
+  let db: Knex
+  let repository: KnexRepository<UserDBEntity, User>
+  let repositoryJob: KnexRepository<JobDBEntity, Job, 'id'>
 
   beforeAll(async () => {
     const conditionAdapterRegistry = ConditionAdapterRegistry.getInstance()
     conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
-    conditionAdapterRegistry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
 
-    // Initialize MikroORM with PostgreSQL
-    orm = await MikroORM.init({
-      entities: [UserEntity, JobEntity],
-      driver: PostgreSqlDriver,
-      dbName: process.env.POSTGRES_DB || 'test_db',
-      host: process.env.POSTGRES_HOST || 'localhost',
-      port: parseInt(process.env.POSTGRES_PORT || '5433'),
-      user: process.env.POSTGRES_USER || 'test_db',
-      password: process.env.POSTGRES_PASSWORD || 'test_db',
-      debug: false,
+    db = knex({
+      client: 'pg',
+      connection: {
+        host: process.env.POSTGRES_HOST || '127.0.0.1',
+        port: parseInt(process.env.POSTGRES_PORT || '5433'),
+        user: process.env.POSTGRES_USER || 'test_db',
+        password: process.env.POSTGRES_PASSWORD || 'test_db',
+        database: process.env.POSTGRES_DB || 'test_db',
+      },
     })
 
-    em = orm.em.fork()
+    await db.schema.dropTableIfExists('test_knex_users')
+    await db.schema.dropTableIfExists('test_knex_jobs')
 
-    // Create the test table
-    await orm.schema.dropSchema()
-    await orm.schema.createSchema()
+    await db.schema.createTable('test_knex_users', (table) => {
+      table.string('email').primary()
+      table.string('name').notNullable()
+      table.integer('age').notNullable()
+      table.boolean('is_active').notNullable().defaultTo(true)
+      table.timestamp('created_at', { useTz: false }).notNullable()
+      table.string('bio').nullable()
+    })
 
-    // Initialize repository
-    repository = new MikroRepository<UserEntity, User>(em.getRepository(UserEntity), new UserMapper())
-    repositoryJob = new MikroRepository<JobEntity, Job, 'id'>(em.getRepository(JobEntity), new JobMapper())
+    await db.schema.createTable('test_knex_jobs', (table) => {
+      table.increments('id').primary()
+      table.string('name').notNullable()
+      table.timestamp('created_at', { useTz: false }).notNullable()
+    })
+
+    repository = new KnexRepository<UserDBEntity, User>(db, new UserMapper(), {
+      table: 'test_knex_users',
+      primary: ['email'],
+    })
+
+    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(db, new JobMapper(), {
+      table: 'test_knex_jobs',
+      primary: ['id'],
+    })
   })
 
   afterAll(async () => {
-    // Clean up: drop schema and close connection
-    await orm.schema.dropSchema()
-    await orm.close(true)
+    await db.schema.dropTableIfExists('test_knex_users')
+    await db.schema.dropTableIfExists('test_knex_jobs')
+    await db.destroy()
   })
 
   beforeEach(async () => {
-    // Clear the table before each test
     await repository.truncate()
+    await repositoryJob.truncate()
   })
 
   describe('insert', () => {
     it('should insert a single user', async () => {
-      const userData: Omit<User, 'id'> = {
+      const userData: User = {
         email: 'john@example.com',
         name: 'John Doe',
         age: 30,
@@ -79,7 +85,7 @@ describe('MikroRepository', () => {
     })
 
     it('should insert user with optional fields', async () => {
-      const userData: Omit<User, 'id'> = {
+      const userData: User = {
         email: 'jane@example.com',
         name: 'Jane Smith',
         age: 25,
@@ -95,46 +101,26 @@ describe('MikroRepository', () => {
   })
 
   describe('insertMany', () => {
-    it('should insert multiple users and return primary keys', async () => {
-      const users: Omit<User, 'id'>[] = [
-        {
-          email: 'user1@example.com',
-          name: 'User 1',
-          age: 20,
-          isActive: true,
-          createdAt: new Date(),
-        },
-        {
-          email: 'user2@example.com',
-          name: 'User 2',
-          age: 30,
-          isActive: true,
-          createdAt: new Date(),
-        },
-        {
-          email: 'user3@example.com',
-          name: 'User 3',
-          age: 40,
-          isActive: false,
-          createdAt: new Date(),
-        },
-      ]
+    it('should insert multiple users and return inserted rows', async () => {
+      const result = await repositoryJob.insertMany<JobDBEntity[]>([
+        { name: 'Job 1', createdAt: new Date() },
+        { name: 'Job 2', createdAt: new Date() },
+      ])
 
-      const ids = await repository.insertMany<string[]>(users)
+      expect(result).toHaveLength(2)
 
-      expect(ids).toHaveLength(3)
-      expect(ids.every((id) => typeof id === 'string')).toBe(true)
+      const count = await repositoryJob.count()
+      expect(count).toBe(2)
     })
 
     it('should return empty array for empty input', async () => {
-      const ids = await repository.insertMany<number[]>([])
-      expect(ids).toEqual([])
+      const result = await repository.insertMany<UserDBEntity[]>([])
+      expect(result).toEqual([])
     })
   })
 
   describe('findOne', () => {
     it('should find user by email condition', async () => {
-      // Insert test data
       await repository.insert({
         email: 'find@example.com',
         name: 'Find Me',
@@ -167,8 +153,7 @@ describe('MikroRepository', () => {
         createdAt: new Date(),
       })
 
-      const condition: Condition = ConditionBuilder.create({ age: { $lt: 20 }, isActive: true }).build()
-
+      const condition: Condition = ConditionBuilder.create({ age: { $lt: 20 }, is_active: true }).build()
       const user = await repository.findOne(condition)
 
       expect(user).toBeDefined()
@@ -178,7 +163,6 @@ describe('MikroRepository', () => {
 
   describe('findAll', () => {
     beforeEach(async () => {
-      // Insert test data
       const users: User[] = [
         { email: 'alice@example.com', name: 'Alice', age: 25, isActive: true, createdAt: new Date('2024-01-01') },
         { email: 'bob@example.com', name: 'Bob', age: 30, isActive: true, createdAt: new Date('2024-01-02') },
@@ -197,7 +181,7 @@ describe('MikroRepository', () => {
     })
 
     it('should find users with condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
+      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
       const users = await repository.findAll({ condition })
 
       expect(users).toHaveLength(3)
@@ -260,16 +244,6 @@ describe('MikroRepository', () => {
       await expect(repository.findAll({ paginator })).rejects.toThrow('Sort is required when paginator is used')
     })
 
-    it('should find users with field selection', async () => {
-      const users = await repository.findAll({
-        select: ['email', 'name'] as any,
-      })
-
-      expect(users).toHaveLength(5)
-      expect(users[0].email).toBeDefined()
-      expect(users[0].name).toBeDefined()
-    })
-
     it('should combine condition, sort, and pagination', async () => {
       const condition: Condition = ConditionBuilder.create({ age: { $gte: 30 } }).build()
 
@@ -289,9 +263,49 @@ describe('MikroRepository', () => {
     })
   })
 
+  describe('findPartial', () => {
+    beforeEach(async () => {
+      await repository.insertMany([
+        { email: 'partial1@example.com', name: 'Partial 1', age: 25, isActive: true, createdAt: new Date() },
+        { email: 'partial2@example.com', name: 'Partial 2', age: 30, isActive: false, createdAt: new Date() },
+      ])
+    })
+
+    it('should return only selected fields', async () => {
+      const result = await repository.findPartial<{ email: string; name: string }>({
+        select: ['email', 'name'],
+        sort: { email: 'asc' },
+      })
+
+      expect(result).toHaveLength(2)
+      expect(result[0].email).toBeDefined()
+      expect(result[0].name).toBeDefined()
+      expect((result[0] as Record<string, unknown>).age).toBeUndefined()
+    })
+
+    it('should apply condition with select', async () => {
+      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const result = await repository.findPartial<{ email: string }>({
+        select: ['email'],
+        condition,
+      })
+
+      expect(result).toHaveLength(1)
+      expect(result[0].email).toBe('partial1@example.com')
+    })
+
+    it('should throw error when using paginator without sort', async () => {
+      const paginator = new Paginator()
+      paginator.setCurrentPage(1)
+      paginator.setItemsPerPage(2)
+
+      await expect(repository.findPartial({ select: ['email'], paginator })).rejects.toThrow('Sort is required when paginator is used')
+    })
+  })
+
   describe('count', () => {
     beforeEach(async () => {
-      const users: Omit<User, 'id'>[] = [
+      const users: User[] = [
         { email: 'user1@example.com', name: 'User 1', age: 20, isActive: true, createdAt: new Date() },
         { email: 'user2@example.com', name: 'User 2', age: 30, isActive: true, createdAt: new Date() },
         { email: 'user3@example.com', name: 'User 3', age: 40, isActive: false, createdAt: new Date() },
@@ -307,7 +321,7 @@ describe('MikroRepository', () => {
     })
 
     it('should count users with condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
+      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
       const count = await repository.count(condition)
 
       expect(count).toBe(2)
@@ -321,11 +335,11 @@ describe('MikroRepository', () => {
     })
 
     it('should count with complex condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ age: { $gte: 25 }, isActive: true }).build()
+      const condition: Condition = ConditionBuilder.create({ age: { $gte: 25 }, is_active: true }).build()
 
       const count = await repository.count(condition)
 
-      expect(count).toBe(1) // Only user2 matches
+      expect(count).toBe(1)
     })
   })
 
@@ -345,7 +359,7 @@ describe('MikroRepository', () => {
 
       expect(updatedUser.name).toBe('Updated Name')
       expect(updatedUser.age).toBe(26)
-      expect(updatedUser.email).toBe('update@example.com') // unchanged
+      expect(updatedUser.email).toBe('update@example.com')
     })
 
     it('should throw error when entity not found', async () => {
@@ -397,6 +411,32 @@ describe('MikroRepository', () => {
     })
   })
 
+  describe('update', () => {
+    it('should update multiple rows and return count', async () => {
+      await repository.insertMany([
+        { email: 'u1@example.com', name: 'User 1', age: 25, isActive: true, createdAt: new Date() },
+        { email: 'u2@example.com', name: 'User 2', age: 30, isActive: true, createdAt: new Date() },
+        { email: 'u3@example.com', name: 'User 3', age: 35, isActive: false, createdAt: new Date() },
+      ])
+
+      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const count = await repository.update(condition, { age: 99 })
+
+      expect(count).toBe(2)
+
+      const allUsers = await repository.findAll({ sort: { email: 'asc' } })
+      expect(allUsers.filter((u) => u.age === 99)).toHaveLength(2)
+      expect(allUsers.find((u) => !u.isActive)?.age).toBe(35)
+    })
+
+    it('should return 0 when no rows match', async () => {
+      const condition: Condition = ConditionBuilder.create({ email: 'nonexistent@example.com' }).build()
+      const count = await repository.update(condition, { name: 'Updated' })
+
+      expect(count).toBe(0)
+    })
+  })
+
   describe('delete', () => {
     it('should delete users by condition', async () => {
       await repository.insertMany([
@@ -405,7 +445,7 @@ describe('MikroRepository', () => {
         { email: 'keep@example.com', name: 'Keep', age: 35, isActive: false, createdAt: new Date() },
       ])
 
-      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
+      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
       const deletedCount = await repository.delete(condition)
 
       expect(deletedCount).toBe(2)
@@ -457,7 +497,7 @@ describe('MikroRepository', () => {
         { email: 'query2@example.com', name: 'Query 2', age: 30, isActive: true, createdAt: new Date() },
       ])
 
-      const result = await repository.query<{ count: string }>('SELECT COUNT(*) as count FROM test_users')
+      const result = await repository.query<{ count: string }[]>('SELECT COUNT(*) as count FROM test_knex_users')
 
       expect(result).toBeDefined()
     })
@@ -471,7 +511,7 @@ describe('MikroRepository', () => {
         createdAt: new Date(),
       })
 
-      const result = await repository.query<any[]>('SELECT * FROM test_users WHERE email = ?', ['binding@example.com'])
+      const result = await repository.query<any[]>('SELECT * FROM test_knex_users WHERE email = ?', ['binding@example.com'])
 
       expect(result).toBeDefined()
     })
@@ -479,17 +519,26 @@ describe('MikroRepository', () => {
 
   describe('stream', () => {
     beforeEach(async () => {
-      const users: Omit<User, 'id'>[] = [
+      const users: User[] = [
         { email: 'stream1@example.com', name: 'Stream 1', age: 20, isActive: true, createdAt: new Date('2024-01-01') },
         { email: 'stream2@example.com', name: 'Stream 2', age: 30, isActive: true, createdAt: new Date('2024-01-02') },
-        { email: 'stream3@example.com', name: 'Stream 3', age: 40, isActive: false, createdAt: new Date('2024-01-03') },
+        {
+          email: 'stream3@example.com',
+          name: 'Stream 3',
+          age: 40,
+          isActive: false,
+          createdAt: new Date('2024-01-03'),
+        },
       ]
 
       await repository.insertMany(users)
     })
 
     it('should stream all users', async () => {
-      const stream = repository.stream<User>({ sort: { age: 'asc' } })
+      const stream = repository.stream<User>({
+        select: ['email', 'name', 'age', 'is_active', 'created_at', 'bio'],
+        sort: { age: 'asc' },
+      })
       const users: User[] = []
 
       for await (const user of stream) {
@@ -503,7 +552,11 @@ describe('MikroRepository', () => {
 
     it('should stream with condition', async () => {
       const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
-      const stream = repository.stream<User>({ condition, sort: { age: 'asc' } })
+      const stream = repository.stream<User>({
+        select: ['email', 'name', 'age', 'is_active', 'created_at', 'bio'],
+        condition,
+        sort: { age: 'asc' },
+      })
       const users: User[] = []
 
       for await (const user of stream) {
@@ -520,6 +573,7 @@ describe('MikroRepository', () => {
       paginator.setItemsPerPage(2)
 
       const stream = repository.stream<User>({
+        select: ['email', 'name', 'age', 'is_active', 'created_at', 'bio'],
         paginator,
         sort: { age: 'asc' },
       })
@@ -539,13 +593,18 @@ describe('MikroRepository', () => {
       paginator.setCurrentPage(1)
       paginator.setItemsPerPage(2)
 
-      expect(() => repository.stream({ paginator })).toThrow('Sort is required when paginator is used')
+      expect(() =>
+        repository.stream({
+          select: ['email'],
+          paginator,
+        })
+      ).toThrow('Sort is required when paginator is used')
     })
   })
 
   describe('bulkInsert', () => {
     it('should bulk insert users from stream', async () => {
-      const users: Omit<User, 'id'>[] = [
+      const users: User[] = [
         { email: 'bulk1@example.com', name: 'Bulk 1', age: 25, isActive: true, createdAt: new Date() },
         { email: 'bulk2@example.com', name: 'Bulk 2', age: 30, isActive: true, createdAt: new Date() },
         { email: 'bulk3@example.com', name: 'Bulk 3', age: 35, isActive: false, createdAt: new Date() },
@@ -561,14 +620,14 @@ describe('MikroRepository', () => {
     })
 
     it('should return 0 for empty stream', async () => {
-      const stream = jsonToStream<Omit<User, 'id'>>([])
+      const stream = jsonToStream<User>([])
       const insertedCount = await repository.bulkInsert(stream)
 
       expect(insertedCount).toBe(0)
     })
 
     it('should bulk insert with custom field mapping', async () => {
-      const users: Omit<User, 'id'>[] = [
+      const users: User[] = [
         { email: 'map1@example.com', name: 'Map 1', age: 25, isActive: true, createdAt: new Date() },
         { email: 'map2@example.com', name: 'Map 2', age: 30, isActive: true, createdAt: new Date() },
       ]
@@ -579,8 +638,8 @@ describe('MikroRepository', () => {
           email: 'email',
           name: 'name',
           age: 'age',
-          isActive: 'isActive',
-          createdAt: 'createdAt',
+          is_active: 'is_active',
+          created_at: 'created_at',
         },
       })
 
@@ -607,50 +666,74 @@ describe('MikroRepository', () => {
 
   describe('primary key', () => {
     it('should expose primary key information', () => {
-      expect(repository.primary).toBeDefined()
+      expect(repository.primary).toEqual(['email'])
       expect(repositoryJob.primary).toEqual(['id'])
     })
   })
 
+  describe('auto-increment primary key', () => {
+    it('should insert and return auto-incremented id', async () => {
+      const job = await repositoryJob.insert({
+        name: 'Test Job',
+        createdAt: new Date(),
+      })
+
+      expect(job.id).toBeDefined()
+      expect(typeof job.id).toBe('number')
+      expect(job.name).toBe('Test Job')
+    })
+
+    it('should find job by id', async () => {
+      const job = await repositoryJob.insert({
+        name: 'Find Job',
+        createdAt: new Date(),
+      })
+
+      if (!job.id) throw new Error('Job id is undefined')
+
+      const condition: Condition = ConditionBuilder.create({ id: job.id }).build()
+      const found = await repositoryJob.findOne(condition)
+
+      expect(found).toBeDefined()
+      expect(found?.name).toBe('Find Job')
+    })
+
+    it('should update job by id', async () => {
+      const job = await repositoryJob.insert({
+        name: 'Update Job',
+        createdAt: new Date(),
+      })
+
+      if (!job.id) throw new Error('Job id is undefined')
+
+      const condition: Condition = ConditionBuilder.create({ id: job.id }).build()
+      const updated = await repositoryJob.updateOne(condition, { name: 'Updated Job' })
+
+      expect(updated.name).toBe('Updated Job')
+      expect(updated.id).toBe(job.id)
+    })
+  })
 })
 
 //region Class helpers
 
-// Test Entity
-@Entity({ tableName: 'test_users' })
-class UserEntity extends BaseEntity {
-  @Property({ primary: true })
-  email: string = ''
-
-  @Property()
-  name: string = ''
-
-  @Property()
-  age: number = 0
-
-  @Property({ fieldName: 'is_active', default: true })
-  isActive: boolean = true
-
-  @Property({ fieldName: 'created_at' })
-  createdAt: Date = new Date()
-
-  @Property({ nullable: true })
+// DB entity types (matching actual DB column names)
+interface UserDBEntity extends Record<string, unknown> {
+  email: string
+  name: string
+  age: number
+  is_active: boolean
+  created_at: Date
   bio?: string
 }
 
-@Entity({ tableName: 'test_jobs' })
-class JobEntity extends BaseEntity {
-  @PrimaryKey({ autoincrement: true })
+interface JobDBEntity extends Record<string, unknown> {
   id?: number
-
-  @Property()
-  name: string = ''
-
-  @Property({ fieldName: 'created_at' })
-  createdAt: Date = new Date()
+  name: string
+  created_at: Date
 }
 
-// Domain Entity
+// Domain types (camelCase)
 interface User {
   email: string
   name: string
@@ -666,71 +749,72 @@ interface Job {
   createdAt: Date
 }
 
-// Mapper
-class UserMapper implements IMapper<User, UserEntity> {
-  toPersistence(domain: Partial<PropertySchema<User>>): Partial<UserEntity> {
-    const entity: Partial<UserEntity> = {}
+// Mappers
+class UserMapper implements IMapper<User, UserDBEntity> {
+  toPersistence(domain: Partial<PropertySchema<User>>): Partial<UserDBEntity> {
+    const entity: Partial<UserDBEntity> = {}
 
     if (domain.email !== undefined) entity.email = domain.email
     if (domain.name !== undefined) entity.name = domain.name
     if (domain.age !== undefined) entity.age = domain.age
-    if (domain.isActive !== undefined) entity.isActive = domain.isActive
-    if (domain.createdAt !== undefined) entity.createdAt = domain.createdAt
+    if (domain.isActive !== undefined) entity.is_active = domain.isActive
+    if (domain.createdAt !== undefined) entity.created_at = domain.createdAt
     if (domain.bio !== undefined) entity.bio = domain.bio
 
     return entity
   }
 
-  toDomain(entity: UserEntity): User {
+  toDomain(entity: UserDBEntity): User {
     return {
       email: entity.email,
       name: entity.name,
       age: entity.age,
-      isActive: entity.isActive,
-      createdAt: entity.createdAt,
+      isActive: entity.is_active,
+      createdAt: entity.created_at,
       bio: entity.bio,
     }
   }
 
-  toEntity(domain: Partial<User>): UserEntity {
-    const entity = new UserEntity()
-
-    entity.email = domain.email || ''
-    entity.name = domain.name || ''
-    entity.age = domain.age || 0
-    entity.isActive = domain.isActive !== undefined ? domain.isActive : true
-    entity.createdAt = domain.createdAt || new Date()
-    entity.bio = domain.bio
-
-    return entity
+  toEntity(domain: Partial<User>): UserDBEntity {
+    return {
+      email: domain.email || '',
+      name: domain.name || '',
+      age: domain.age || 0,
+      is_active: domain.isActive !== undefined ? domain.isActive : true,
+      created_at: domain.createdAt || new Date(),
+      bio: domain.bio,
+    }
   }
 }
 
-class JobMapper implements IMapper<Job, JobEntity> {
-  toPersistence(domain: Partial<PropertySchema<Job>>): Partial<JobEntity> {
-    const entity: Partial<JobEntity> = {}
+class JobMapper implements IMapper<Job, JobDBEntity> {
+  toPersistence(domain: Partial<PropertySchema<Job>>): Partial<JobDBEntity> {
+    const entity: Partial<JobDBEntity> = {}
 
     if (domain.id !== undefined) entity.id = domain.id
     if (domain.name !== undefined) entity.name = domain.name
-    if (domain.createdAt !== undefined) entity.createdAt = domain.createdAt
+    if (domain.createdAt !== undefined) entity.created_at = domain.createdAt
 
     return entity
   }
 
-  toDomain(entity: JobEntity): Job {
+  toDomain(entity: JobDBEntity): Job {
     return {
       id: entity.id,
       name: entity.name,
-      createdAt: entity.createdAt,
+      createdAt: entity.created_at,
     }
   }
 
-  toEntity(domain: Partial<Job>): JobEntity {
-    const entity = new JobEntity()
+  toEntity(domain: Partial<Job>): JobDBEntity {
+    const entity: JobDBEntity = {
+      name: domain.name || '',
+      created_at: domain.createdAt || new Date(),
+    }
 
-    if (domain.id !== undefined) entity.id = domain.id
-    entity.name = domain.name || ''
-    entity.createdAt = domain.createdAt || new Date()
+    if (domain.id !== undefined) {
+      entity.id = domain.id
+    }
 
     return entity
   }

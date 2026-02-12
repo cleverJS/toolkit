@@ -1,6 +1,6 @@
 {
   "name": "@cleverjs/toolkit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "TypeScript toolkit with utilities, helpers, and MikroORM repository patterns for building applications",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",
@@ -57,6 +57,7 @@
     "@cleverJS/condition-builder": "^1.0.0",
     "@mikro-orm/core": "^6.6.0",
     "@mikro-orm/knex": "^6.6.0",
+    "knex": "^3.1.0",
     "pg": "^8.0.0",
     "pg-copy-streams": "^7.0.0"
   },
@@ -68,6 +69,9 @@
       "optional": true
     },
     "@mikro-orm/knex": {
+      "optional": true
+    },
+    "knex": {
       "optional": true
     },
     "pg": {
