@@ -1,17 +1,15 @@
 import { Stream } from 'node:stream'
 
-import { isInstanceOf } from '../helpers/type-guards'
-
-import { hasMethods, isInstanceOfICloneable, isNonPrimitive } from './reflect'
+import { isInstanceOfICloneable } from './reflect'
 import { ICloner } from './strategy/ICloner'
-import { V8Cloner } from './strategy/V8Cloner'
+import { StructuredCloner } from './strategy/StructuredCloner'
 
 export class Cloner {
   private static instance: Cloner
   private cloner: ICloner
 
   private constructor() {
-    this.cloner = new V8Cloner()
+    this.cloner = new StructuredCloner()
   }
 
   public static getInstance(): Cloner {
@@ -23,61 +21,17 @@ export class Cloner {
     return Cloner.instance
   }
 
-  public static isCloneable(obj: any) {
-    if (!isNonPrimitive(obj) || isInstanceOf(obj, 'clone')) {
-      return true
-    }
-
-    if (obj instanceof Date) {
-      return true
+  public static isCloneable(obj: unknown): boolean {
+    if (obj == null || typeof obj !== 'object') {
+      return typeof obj !== 'function'
     }
 
     if (obj instanceof Stream) {
       return false
     }
 
-    if (obj instanceof Buffer) {
-      return true
-    }
-
-    if (Array.isArray(obj)) {
-      for (const item of obj) {
-        if (!this.isCloneable(item)) {
-          return false
-        }
-      }
-
-      return true
-    }
-
-    if (obj instanceof Set) {
-      for (const item of obj) {
-        if (!this.isCloneable(item)) {
-          return false
-        }
-      }
-
-      return true
-    }
-
-    if (obj instanceof Map) {
-      for (const [, item] of obj) {
-        if (!this.isCloneable(item)) {
-          return false
-        }
-      }
-
-      return true
-    }
-
-    if (hasMethods(obj)) {
+    if (obj instanceof WeakMap || obj instanceof WeakSet) {
       return false
-    }
-
-    for (const item of Object.values(obj)) {
-      if (!this.isCloneable(item)) {
-        return false
-      }
     }
 
     return true

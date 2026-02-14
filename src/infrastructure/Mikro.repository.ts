@@ -1,5 +1,15 @@
 import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverJS/condition-builder'
-import { BaseEntity, EntityDTO, EntityRepository, FilterQuery, FromEntityType, OrderDefinition, RequiredEntityData } from '@mikro-orm/core'
+import {
+  BaseEntity,
+  EntityDTO,
+  EntityManager,
+  EntityName,
+  EntityRepository,
+  FilterQuery,
+  FromEntityType,
+  OrderDefinition,
+  RequiredEntityData,
+} from '@mikro-orm/core'
 import type { FindAllOptions } from '@mikro-orm/core/drivers/IDatabaseDriver'
 import type { EntityData } from '@mikro-orm/core/typings'
 import { Knex } from '@mikro-orm/knex'
@@ -13,6 +23,7 @@ import { PropertySchema } from '../utils/types/types'
 
 import { BulkInsertStrategyRegistry } from './bulk-insert'
 import { IBulkOption, IMapper, IRepository } from './IRepository'
+import { IConnectionScope } from './scope/IConnectionScope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
 type PrimaryKey = string | number
@@ -24,11 +35,20 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   public readonly primary?: string[]
 
   public constructor(
-    protected readonly repository: EntityRepository<DBEntity>,
+    protected readonly scope: IConnectionScope<EntityManager>,
+    protected readonly entityClass: EntityName<DBEntity>,
     protected readonly mapper: IMapper<DomainEntity, DBEntity>
   ) {
-    const meta = repository.getEntityManager().getMetadata().get(repository.getEntityName())
+    const meta = this.em.getMetadata().get(this.entityClass)
     this.primary = meta.primaryKeys
+  }
+
+  private get em(): EntityManager {
+    return this.scope.getConnection()
+  }
+
+  private get repository(): EntityRepository<DBEntity> {
+    return this.em.getRepository(this.entityClass)
   }
 
   public async count(condition?: Condition): Promise<number> {
@@ -73,7 +93,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     return items.map((i) => this.mapper.toDomain(i))
   }
 
-  public async findPartial<R>(payload: IFindAllWithSelect): Promise<R[]> {
+  public async findPartial<R = Partial<DomainEntity>>(payload: IFindAllWithSelect): Promise<R[]> {
     const { condition, paginator, sort, select } = payload
 
     if (paginator && paginator.getLimit() > 1 && !sort) {
@@ -108,8 +128,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async findOne(condition: Condition): Promise<DomainEntity | null> {
-    const paginator = new Paginator()
-    paginator.setItemsPerPage(1)
+    const paginator = new Paginator({ perPage: 1 })
 
     // Use primary key for deterministic ordering when no sort is specified
     const defaultSort = this.primary?.length ? { [this.primary[0]]: 'asc' as const } : undefined
@@ -120,8 +139,8 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
     const entity = this.mapper.toEntity(data as DomainEntity)
-    const nextEntity = this.repository.create(entity)
-    await this.repository.getEntityManager().persist(nextEntity).flush()
+    const nextEntity = this.em.create(this.entityClass, entity as never)
+    await this.em.persist(nextEntity).flush()
 
     return this.mapper.toDomain(nextEntity)
   }
@@ -144,7 +163,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     const item = items[0]
 
     item.assign(cleanedEntity)
-    await this.repository.getEntityManager().flush()
+    await this.em.flush()
 
     return this.mapper.toDomain(item)
   }
@@ -174,15 +193,8 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     return nextEntities as R
   }
 
-  public async query<R = Record<string, unknown>>(sql: string, binding?: unknown[]): Promise<R | null> {
-    const knex = this.getKnex()
-    const result: { rows: R } = binding ? await knex.raw(sql, binding) : await knex.raw(sql)
-
-    return result.rows
-  }
-
   public stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R> {
-    const { select, paginator, condition, sort } = payload
+    const { select = '*', paginator, condition, sort } = payload
 
     const knex = this.getKnex()
     const queryBuilder = knex.queryBuilder<DBEntity, R[]>()
@@ -215,6 +227,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>, options?: IBulkOption): Promise<number> {
+    if (this.scope.isInTransaction()) {
+      throw new Error('bulkInsert with COPY does not participate in transactions. Use insertMany() instead.')
+    }
+
     let first: DomainEntity
     let replayStream: PassThrough
 
@@ -240,8 +256,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     const entityStream = this.#createEntityStream(replayStream)
 
     // Get the appropriate bulk insert strategy for the current database
-    const em = this.repository.getEntityManager()
-    const strategy = BulkInsertStrategyRegistry.getInstance().getStrategy(em)
+    const strategy = BulkInsertStrategyRegistry.getInstance().getStrategy(this.em)
     const knex = this.getKnex()
 
     // Execute the bulk insert using the selected strategy
@@ -251,18 +266,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     })
   }
 
-  public async truncate(): Promise<void> {
-    const knex = this.getKnex()
-    await knex.raw('TRUNCATE TABLE ??', [this.getTable()])
-  }
-
   protected getKnex(): Knex {
-    const em = this.repository.getEntityManager()
-    return KnexHelper.getKnex(em)
+    return KnexHelper.getKnex(this.em)
   }
 
   protected getTable(): string {
-    const meta = this.repository.getEntityManager().getMetadata().get(this.repository.getEntityName())
+    const meta = this.em.getMetadata().get(this.entityClass)
     return meta.tableName
   }
 
@@ -303,8 +312,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       domainToEntityMap = mapping
     }
 
-    const entityName = this.repository.getEntityName()
-    const meta = this.repository.getEntityManager().getMetadata().get(entityName)
+    const meta = this.em.getMetadata().get(this.entityClass)
 
     const mapping: Record<string, string> = {}
 
@@ -328,8 +336,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   #buildDbToEntityMapping(): Record<string, string> {
-    const entityName = this.repository.getEntityName()
-    const meta = this.repository.getEntityManager().getMetadata().get(entityName)
+    const meta = this.em.getMetadata().get(this.entityClass)
 
     // Build reverse mapping: dbColumn -> entityProperty
     const dbToEntityMapping: Record<string, string> = {}

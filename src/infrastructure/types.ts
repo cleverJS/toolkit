@@ -9,7 +9,7 @@ export interface IFindAll {
 }
 
 export interface IFindAllWithSelect extends IFindAll {
-  select: string[]
+  select?: string[]
 }
 
 export interface ISort {

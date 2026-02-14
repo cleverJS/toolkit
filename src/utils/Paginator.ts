@@ -1,38 +1,35 @@
+export interface IPaginatorOptions {
+  page?: number
+  perPage?: number
+  skipTotal?: boolean
+}
+
 export class Paginator {
-  protected currentPage: number = 1
-  protected itemsPerPage: number = 10
-  protected total: number = 0
-  protected skipTotal: boolean = false
+  private readonly page: number
+  private readonly perPage: number
+  private readonly skipTotal: boolean
+  private total: number = 0
 
-  public getPageCount(): number {
-    if (!this.getItemsPerPage()) {
-      return 0
-    }
-    return Math.ceil(this.getTotal() / this.getItemsPerPage())
+  public constructor(options: IPaginatorOptions = {}) {
+    this.page = Math.max(1, options.page ?? 1)
+    this.perPage = Math.max(1, options.perPage ?? 10)
+    this.skipTotal = options.skipTotal ?? false
   }
 
-  public getCurrentPage(): number {
-    return this.currentPage
+  public getPage(): number {
+    return this.page
   }
 
-  public nextPage(): void {
-    this.setCurrentPage(++this.currentPage)
+  public getPerPage(): number {
+    return this.perPage
   }
 
-  public setCurrentPage(currentPage: number): void {
-    if (currentPage === 0) {
-      currentPage = 1
-    }
-
-    this.currentPage = currentPage || 1
+  public getLimit(): number {
+    return this.perPage
   }
 
-  public getItemsPerPage(): number {
-    return this.itemsPerPage
-  }
-
-  public setItemsPerPage(value: number): void {
-    this.itemsPerPage = value || 5
+  public getOffset(): number {
+    return this.perPage * (this.page - 1)
   }
 
   public getTotal(): number {
@@ -40,70 +37,14 @@ export class Paginator {
   }
 
   public setTotal(total: number): void {
-    const parsed = parseInt(`${total}`, 10)
-    this.total = Number.isNaN(parsed) ? 0 : parsed
-    this.validate()
-  }
-
-  public setSkipTotal(value: boolean): void {
-    this.skipTotal = value
+    this.total = Math.max(0, total)
   }
 
   public isSkipTotal(): boolean {
     return this.skipTotal
   }
 
-  public getOffset(): number {
-    return this.itemsPerPage * (this.currentPage - 1)
-  }
-
-  public getLimit(): number {
-    return this.itemsPerPage
-  }
-
-  public getCurrentPages(): number[] {
-    const result: number[] = []
-    const pageCurrent = this.getCurrentPage()
-    const pageCount = this.getPageCount()
-
-    if (pageCount) {
-      if (pageCount <= 5) {
-        for (let i = 1; i <= pageCount; i++) {
-          result.push(i)
-        }
-      } else if (pageCurrent <= 3) {
-        for (let i = 1; i <= 5; i++) {
-          result.push(i)
-        }
-      } else if (pageCount - pageCurrent <= 2) {
-        for (let i = pageCount - 4; i <= pageCount; i++) {
-          result.push(i)
-        }
-      } else {
-        for (let i = pageCurrent - 2; i <= pageCurrent + 2; i++) {
-          result.push(i)
-        }
-      }
-    }
-
-    return result
-  }
-
-  protected validate(): void {
-    if (this.currentPage < 1) {
-      this.currentPage = 1
-    }
-
-    if (this.itemsPerPage < 1) {
-      this.itemsPerPage = 1
-    }
-
-    if (this.total < 0) {
-      this.total = 0
-    }
-
-    if (this.itemsPerPage * (this.currentPage - 1) > this.total) {
-      this.currentPage = 1
-    }
+  public getPageCount(): number {
+    return this.perPage ? Math.ceil(this.total / this.perPage) : 0
   }
 }

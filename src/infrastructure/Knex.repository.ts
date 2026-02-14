@@ -9,6 +9,7 @@ import { PropertySchema } from '../utils/types/types'
 
 import { FallbackBulkInsertStrategy, IBulkInsertStrategy } from './bulk-insert'
 import { IBulkOption, IMapper, IRepository } from './IRepository'
+import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
 export interface IKnexRepositoryConfig {
@@ -25,11 +26,15 @@ export class KnexRepository<
   public readonly primary?: string[]
 
   public constructor(
-    protected readonly knex: Knex,
+    protected readonly scope: IConnectionScope<Knex>,
     protected readonly mapper: IMapper<DomainEntity, DBEntity>,
     protected readonly config: IKnexRepositoryConfig
   ) {
     this.primary = config.primary
+  }
+
+  private get knex(): Knex {
+    return this.scope.getConnection()
   }
 
   public async count(condition?: Condition): Promise<number> {
@@ -63,7 +68,7 @@ export class KnexRepository<
   }
 
   public async findPartial<R>(payload: IFindAllWithSelect): Promise<R[]> {
-    const { condition, paginator, sort, select } = payload
+    const { condition, paginator, sort, select = '*' } = payload
 
     if (paginator && paginator.getLimit() > 1 && !sort) {
       throw new Error('Sort is required when paginator is used')
@@ -80,8 +85,7 @@ export class KnexRepository<
   }
 
   public async findOne(condition: Condition): Promise<DomainEntity | null> {
-    const paginator = new Paginator()
-    paginator.setItemsPerPage(1)
+    const paginator = new Paginator({ perPage: 1 })
 
     const defaultSort = this.primary?.length ? { [this.primary[0]]: 'asc' as const } : undefined
     const items = await this.findAll({ condition, paginator, sort: defaultSort })
@@ -146,13 +150,8 @@ export class KnexRepository<
     return result as R
   }
 
-  public async query<R = Record<string, unknown>>(sql: string, binding?: unknown[]): Promise<R | null> {
-    const result: { rows: R } = binding ? await this.knex.raw(sql, binding) : await this.knex.raw(sql)
-    return result.rows
-  }
-
   public stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R> {
-    const { select, paginator, condition, sort } = payload
+    const { select = '*', paginator, condition, sort } = payload
 
     const qb = this.knex(this.config.table).select(select)
 
@@ -171,6 +170,10 @@ export class KnexRepository<
   }
 
   public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>, options?: IBulkOption): Promise<number> {
+    if (this.scope.isInTransaction()) {
+      throw new Error('bulkInsert with COPY does not participate in transactions. Use insertMany() instead.')
+    }
+
     let first: DomainEntity
     let replayStream: PassThrough
 
@@ -197,10 +200,6 @@ export class KnexRepository<
       table: this.config.table,
       objectToDBmapping: mapping,
     })
-  }
-
-  public async truncate(): Promise<void> {
-    await this.knex.raw('TRUNCATE TABLE ??', [this.config.table])
   }
 
   #applyCondition(qb: Knex.QueryBuilder, condition?: Condition): void {

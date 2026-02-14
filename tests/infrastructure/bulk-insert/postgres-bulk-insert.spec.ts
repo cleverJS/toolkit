@@ -4,7 +4,7 @@ import { PropertySchema } from 'src/utils/types/types'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IMapper, MikroRepository, PostgresBulkInsertStrategy } from '../src'
+import { IMapper, MikroConnectionScope, MikroRepository, PostgresBulkInsertStrategy } from '../../../src'
 
 // Test Entity
 @Entity({ tableName: 'test_products' })
@@ -127,9 +127,9 @@ describe('PostgreSQL Bulk Insert', () => {
     await orm.schema.createSchema()
 
     // Initialize repository
-    const entityRepository = em.getRepository(ProductEntity)
+    const scope = new MikroConnectionScope(em)
     const mapper = new ProductMapper()
-    repository = new MikroRepository<ProductEntity, Product>(entityRepository, mapper)
+    repository = new MikroRepository<ProductEntity, Product>(scope, ProductEntity, mapper)
 
     // Initialize strategy
     strategy = new PostgresBulkInsertStrategy()
@@ -143,7 +143,8 @@ describe('PostgreSQL Bulk Insert', () => {
 
   beforeEach(async () => {
     // Clear the table before each test
-    await repository.truncate()
+    await em.execute('TRUNCATE TABLE "test_products" CASCADE')
+    em.clear()
   })
 
   describe('PostgresBulkInsertStrategy', () => {

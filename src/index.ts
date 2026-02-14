@@ -1,11 +1,16 @@
 // Application Layer
-export { AbstractApplicationService } from './application/AbstractApplication.service'
+export { listWithPagination } from './utils/list-with-pagination'
 
 // Infrastructure Layer
 export { IRepository, IMapper, IBulkOption } from './infrastructure/IRepository'
 export { MikroRepository } from './infrastructure/Mikro.repository'
 export { KnexRepository, IKnexRepositoryConfig } from './infrastructure/Knex.repository'
 export { IFindAll, IFindAllWithSelect, ISort } from './infrastructure/types'
+
+// Connection Scope
+export { IConnectionScope, IsolationLevel, TransactionOptions } from './infrastructure/scope'
+export { KnexConnectionScope } from './infrastructure/scope'
+export { MikroConnectionScope } from './infrastructure/scope'
 
 // Bulk Insert Strategies
 export {
@@ -19,7 +24,7 @@ export {
 // Utils
 export { Cloner, ICloneable } from './utils/clone'
 export { removeNullish, removeUndefined, getKeyByValue, isEmptyObject, intersect } from './utils/helpers/object'
-export { Paginator } from './utils/Paginator'
+export { Paginator, IPaginatorOptions } from './utils/Paginator'
 export { KnexHelper } from './utils/KnexHelper'
 export { peekAndReplayStream } from './utils/helpers/streams'
 export { convertToBoolean } from './utils/helpers/converters'
