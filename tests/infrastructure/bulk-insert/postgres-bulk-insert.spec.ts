@@ -4,7 +4,7 @@ import { PropertySchema } from 'src/utils/types/types'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IMapper, MikroConnectionScope, MikroRepository, PostgresBulkInsertStrategy } from '../../../src'
+import { IMapper, MikroConnectionScope, MikroRepository } from '../../../src'
 
 // Test Entity
 @Entity({ tableName: 'test_products' })
@@ -106,7 +106,6 @@ describe('PostgreSQL Bulk Insert', () => {
   let orm: MikroORM
   let em: EntityManager
   let repository: MikroRepository<ProductEntity, Product>
-  let strategy: PostgresBulkInsertStrategy
 
   beforeAll(async () => {
     // Initialize MikroORM with PostgreSQL
@@ -131,8 +130,6 @@ describe('PostgreSQL Bulk Insert', () => {
     const mapper = new ProductMapper()
     repository = new MikroRepository<ProductEntity, Product>(scope, ProductEntity, mapper)
 
-    // Initialize strategy
-    strategy = new PostgresBulkInsertStrategy()
   })
 
   afterAll(async () => {
@@ -148,11 +145,6 @@ describe('PostgreSQL Bulk Insert', () => {
   })
 
   describe('PostgresBulkInsertStrategy', () => {
-    it('should detect PostgreSQL driver as supported', () => {
-      const isSupported = strategy.isSupported(em)
-      expect(isSupported).toBe(true)
-    })
-
     it('should bulk insert products using COPY command', async () => {
       const products: Product[] = [
         {

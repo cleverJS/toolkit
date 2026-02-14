@@ -1,22 +1,14 @@
-import { EntityManager } from '@mikro-orm/core'
-import { Knex } from '@mikro-orm/knex'
+import { Knex } from 'knex'
 import { Client } from 'pg'
 import { from } from 'pg-copy-streams'
 import { PassThrough, Transform } from 'stream'
 
-import { IBulkInsertOptions, IBulkInsertStrategy } from './IBulkInsertStrategy'
+import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'
 
 /**
  * PostgreSQL-specific bulk insert implementation using COPY command
  */
-export class PostgresBulkInsertStrategy implements IBulkInsertStrategy {
-  public isSupported(em: EntityManager): boolean {
-    const driver = em.getDriver()
-    const platform = driver.getPlatform()
-    const platformName = platform.constructor.name
-    return platformName.toLowerCase().includes('postgresqlplatform')
-  }
-
+export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
   public async execute<T>(knex: Knex, stream: PassThrough & AsyncIterable<T>, options: IBulkInsertOptions): Promise<number> {
     const { table, objectToDBmapping } = options
 

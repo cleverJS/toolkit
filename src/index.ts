@@ -2,7 +2,7 @@
 export { listWithPagination } from './utils/list-with-pagination'
 
 // Infrastructure Layer
-export { IRepository, IMapper, IBulkOption } from './infrastructure/IRepository'
+export { IRepository, IMapper } from './infrastructure/IRepository'
 export { MikroRepository } from './infrastructure/Mikro.repository'
 export { KnexRepository, IKnexRepositoryConfig } from './infrastructure/Knex.repository'
 export { IFindAll, IFindAllWithSelect, ISort } from './infrastructure/types'
@@ -18,7 +18,7 @@ export {
   IBulkInsertOptions,
   PostgresBulkInsertStrategy,
   FallbackBulkInsertStrategy,
-  BulkInsertStrategyRegistry,
+  resolveBulkInsertStrategy,
 } from './infrastructure/bulk-insert'
 
 // Utils

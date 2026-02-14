@@ -588,25 +588,6 @@ describe('KnexRepository', () => {
       expect(insertedCount).toBe(0)
     })
 
-    it('should bulk insert with custom field mapping', async () => {
-      const users: User[] = [
-        { email: 'map1@example.com', name: 'Map 1', age: 25, isActive: true, createdAt: new Date() },
-        { email: 'map2@example.com', name: 'Map 2', age: 30, isActive: true, createdAt: new Date() },
-      ]
-
-      const stream = jsonToStream(users)
-      const insertedCount = await repository.bulkInsert(stream, {
-        domainToEntityMap: {
-          email: 'email',
-          name: 'name',
-          age: 'age',
-          is_active: 'is_active',
-          created_at: 'created_at',
-        },
-      })
-
-      expect(insertedCount).toBe(2)
-    })
   })
 
   describe('primary key', () => {
@@ -773,13 +754,34 @@ describe('KnexRepository', () => {
       expect(user?.name).toBe('Outer')
     })
 
-    it('should throw error when bulkInsert is called inside transaction', async () => {
+    it('should bulkInsert inside a transaction', async () => {
+      await scope.transaction(async () => {
+        const stream = jsonToStream<User>([
+          { email: 'bulk-tx1@example.com', name: 'Bulk TX 1', age: 30, isActive: true, createdAt: new Date() },
+          { email: 'bulk-tx2@example.com', name: 'Bulk TX 2', age: 25, isActive: true, createdAt: new Date() },
+        ])
+        const count = await repository.bulkInsert(stream)
+        expect(count).toBe(2)
+      })
+
+      const total = await repository.count()
+      expect(total).toBe(2)
+    })
+
+    it('should rollback bulkInsert when transaction fails', async () => {
       await expect(
         scope.transaction(async () => {
-          const stream = jsonToStream<User>([{ email: 'bulk-tx@example.com', name: 'Bulk TX', age: 30, isActive: true, createdAt: new Date() }])
+          const stream = jsonToStream<User>([
+            { email: 'bulk-rb1@example.com', name: 'Bulk RB 1', age: 30, isActive: true, createdAt: new Date() },
+            { email: 'bulk-rb2@example.com', name: 'Bulk RB 2', age: 25, isActive: true, createdAt: new Date() },
+          ])
           await repository.bulkInsert(stream)
+          throw new Error('force rollback')
         })
-      ).rejects.toThrow('bulkInsert with COPY does not participate in transactions. Use insertMany() instead.')
+      ).rejects.toThrow('force rollback')
+
+      const total = await repository.count()
+      expect(total).toBe(0)
     })
 
     it('should report isInTransaction correctly', async () => {

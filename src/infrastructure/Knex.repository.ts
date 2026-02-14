@@ -7,15 +7,15 @@ import { peekAndReplayStream } from '../utils/helpers/streams'
 import { Paginator } from '../utils/Paginator'
 import { PropertySchema } from '../utils/types/types'
 
-import { FallbackBulkInsertStrategy, IBulkInsertStrategy } from './bulk-insert'
-import { IBulkOption, IMapper, IRepository } from './IRepository'
+import { IBulkInsertStrategy, resolveBulkInsertStrategy } from './bulk-insert'
+import { IMapper, IRepository } from './IRepository'
 import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
 export interface IKnexRepositoryConfig {
   table: string
   primary?: string[]
-  bulkInsertStrategy?: IBulkInsertStrategy
+  bulkInsertStrategy?: IBulkInsertStrategy<Knex>
 }
 
 export class KnexRepository<
@@ -169,11 +169,7 @@ export class KnexRepository<
     return qb.stream().pipe(transformToDomain) as PassThrough & AsyncIterable<R>
   }
 
-  public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>, options?: IBulkOption): Promise<number> {
-    if (this.scope.isInTransaction()) {
-      throw new Error('bulkInsert with COPY does not participate in transactions. Use insertMany() instead.')
-    }
-
+  public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number> {
     let first: DomainEntity
     let replayStream: PassThrough
 
@@ -192,11 +188,11 @@ export class KnexRepository<
       return 0
     }
 
-    const mapping = this.#buildFieldMapping(first, options)
+    const mapping = this.#buildFieldMapping(first)
     const entityStream = this.#createEntityStream(replayStream)
 
-    const strategy = this.config.bulkInsertStrategy ?? new FallbackBulkInsertStrategy()
-    return strategy.execute(this.knex as never, entityStream, {
+    const strategy = this.config.bulkInsertStrategy ?? resolveBulkInsertStrategy(this.knex)
+    return strategy.execute(this.knex, entityStream, {
       table: this.config.table,
       objectToDBmapping: mapping,
     })
@@ -245,25 +241,13 @@ export class KnexRepository<
     return condition
   }
 
-  #buildFieldMapping(item: DomainEntity, options?: IBulkOption): Record<string, string> {
+  #buildFieldMapping(item: DomainEntity): Record<string, string> {
     const dbEntity = this.mapper.toEntity(item)
-
-    let domainToEntityMap = options?.domainToEntityMap
-    if (domainToEntityMap == null) {
-      const mapping: Record<string, string> = {}
-      for (const key of Object.keys(dbEntity as object)) {
-        const value = (dbEntity as Record<string, unknown>)[key]
-        if (typeof value !== 'function') {
-          mapping[key] = key
-        }
-      }
-      domainToEntityMap = mapping
-    }
-
     const mapping: Record<string, string> = {}
-    for (const [key, dbColumn] of Object.entries(domainToEntityMap)) {
-      if (Object.prototype.hasOwnProperty.call(dbEntity, key)) {
-        mapping[key] = dbColumn
+
+    for (const key of Object.keys(dbEntity as object)) {
+      if (typeof (dbEntity as Record<string, unknown>)[key] !== 'function') {
+        mapping[key] = key
       }
     }
 

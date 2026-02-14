@@ -17,7 +17,7 @@ export interface IRepository<DomainEntity = any, PrimaryKey extends keyof Domain
   update(condition: Condition, data: Partial<PropertySchema<DomainEntity>>): Promise<number>
   delete(condition: Condition): Promise<number>
   insertMany<R = any[]>(items: Omit<DomainEntity, PrimaryKey>[]): Promise<R>
-  bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>, options?: IBulkOption): Promise<number>
+  bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number>
   stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R>
 }
 
@@ -25,8 +25,4 @@ export interface IMapper<DomainEntity, DBEntity> {
   toDomain(entity: DBEntity): DomainEntity
   toEntity(data: DomainEntity): DBEntity
   toPersistence(domain: Partial<PropertySchema<DomainEntity>>): Partial<DBEntity>
-}
-
-export interface IBulkOption {
-  domainToEntityMap?: Record<string, string>
 }

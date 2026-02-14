@@ -102,7 +102,7 @@ interface IRepository<DomainEntity, PrimaryKey extends keyof DomainEntity = neve
   update(condition: Condition, data: Partial<...>): Promise<number>
   delete(condition: Condition): Promise<number>
   insertMany(items: Omit<DomainEntity, PrimaryKey>[]): Promise<...>
-  bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>, options?: IBulkOption): Promise<number>
+  bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number>
   stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R>
 }
 ```
@@ -284,7 +284,7 @@ const registry = BulkInsertStrategyRegistry.getInstance()
 registry.registerStrategy(new MySQLBulkInsertStrategy())
 ```
 
-> **Important:** `bulkInsert()` cannot run inside a transaction (PostgreSQL `COPY` does not participate in transactions). The method throws if called within `scope.transaction()`. Use `insertMany()` for transactional batch inserts.
+> **Note:** `bulkInsert()` participates in transactions normally — both PostgreSQL `COPY` and batched `INSERT` strategies respect `scope.transaction()`. If the transaction rolls back, the bulk-inserted rows are discarded.
 
 ### Listing with Pagination
 

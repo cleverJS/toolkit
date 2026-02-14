@@ -1,23 +1,17 @@
-import { EntityManager } from '@mikro-orm/core'
-import { Knex } from '@mikro-orm/knex'
+import { Knex } from 'knex'
 import { PassThrough } from 'stream'
 
-import { IBulkInsertOptions, IBulkInsertStrategy } from './IBulkInsertStrategy'
+import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'
 
 /**
  * Fallback bulk insert implementation using standard INSERT statements
  * Used when database-specific optimizations are not available
  */
-export class FallbackBulkInsertStrategy implements IBulkInsertStrategy {
+export class FallbackBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
   private readonly batchSize: number
 
   public constructor(batchSize: number = 1000) {
     this.batchSize = batchSize
-  }
-
-  public isSupported(_em: EntityManager): boolean {
-    // This strategy is always supported as a fallback
-    return true
   }
 
   public async execute<T>(knex: Knex, stream: PassThrough & AsyncIterable<T>, options: IBulkInsertOptions): Promise<number> {

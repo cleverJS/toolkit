@@ -131,8 +131,4 @@ describe('FallbackBulkInsertStrategy', () => {
     expect(rows[0].price).toBe(99)
   })
 
-  it('should always report as supported', () => {
-    const strategy = new FallbackBulkInsertStrategy()
-    expect(strategy.isSupported({} as any)).toBe(true)
-  })
 })
