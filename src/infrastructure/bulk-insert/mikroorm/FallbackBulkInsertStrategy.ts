@@ -3,6 +3,8 @@ import { PassThrough } from 'stream'
 
 import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'
 
+const DANGEROUS_PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
 /**
  * Fallback bulk insert implementation using standard INSERT statements
  * Used when database-specific optimizations are not available
@@ -43,6 +45,9 @@ export class FallbackBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
     const values = batch.map((item) => {
       const row: Record<string, any> = {}
       for (const [objectKey, dbColumn] of Object.entries(objectToDBmapping)) {
+        if (DANGEROUS_PROTO_KEYS.has(dbColumn)) {
+          continue
+        }
         if (Object.prototype.hasOwnProperty.call(item, objectKey)) {
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, security/detect-object-injection
           row[dbColumn] = item[objectKey]

@@ -26,6 +26,8 @@ import { IMapper, IRepository } from './IRepository'
 import { IConnectionScope } from './scope/IConnectionScope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
+const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
+
 type PrimaryKey = string | number
 
 export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimaryKey extends keyof DomainEntity = never> implements IRepository<
@@ -74,6 +76,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     if (sort) {
       const orderBy: Record<string, 'asc' | 'desc'> = {}
       for (const [field, dir] of Object.entries(sort)) {
+        MikroRepository.#validateIdentifier(field, 'sort')
         orderBy[field] = dir
       }
       options.orderBy = orderBy as OrderDefinition<DBEntity>
@@ -108,6 +111,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     if (sort) {
       const orderBy: Record<string, 'asc' | 'desc'> = {}
       for (const [field, dir] of Object.entries(sort)) {
+        MikroRepository.#validateIdentifier(field, 'sort')
         orderBy[field] = dir
       }
       options.orderBy = orderBy as OrderDefinition<DBEntity>
@@ -200,6 +204,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     const queryBuilder = knex.queryBuilder<DBEntity, R[]>()
 
     queryBuilder.from(this.getTable())
+
+    if (Array.isArray(select)) {
+      for (const field of select) {
+        if (field !== '*') MikroRepository.#validateIdentifier(field, 'select')
+      }
+    }
     queryBuilder.select(select)
 
     if (paginator) {
@@ -212,6 +222,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
     if (sort) {
       for (const [field, dir] of Object.entries(sort)) {
+        MikroRepository.#validateIdentifier(field, 'sort')
         queryBuilder.orderBy(field, dir)
       }
     }
@@ -267,6 +278,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   protected getTable(): string {
     const meta = this.em.getMetadata().get(this.entityClass)
     return meta.tableName
+  }
+
+  static #validateIdentifier(name: string, context: string): void {
+    if (!SAFE_IDENTIFIER_RE.test(name)) {
+      throw new Error(`Invalid ${context} field name: ${name}`)
+    }
   }
 
   #attachPaginatorToQB(paginator: Paginator, qb: Knex.QueryBuilder<DBEntity, any[]>): void {

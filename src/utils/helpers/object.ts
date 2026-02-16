@@ -10,7 +10,7 @@ export function removeUndefined<T extends Record<string, any>>(obj: T): Partial<
 
 export function getKeyByValue<T extends { [index: string]: string | number }>(enumObj: T, value: string | number): keyof T | null {
   for (const key in enumObj) {
-    if (enumObj[key] === value) {
+    if (Object.prototype.hasOwnProperty.call(enumObj, key) && enumObj[key] === value) {
       return key
     }
   }

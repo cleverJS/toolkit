@@ -54,9 +54,9 @@
   "license": "MIT",
   "type": "commonjs",
   "peerDependencies": {
-    "@cleverJS/condition-builder": "^1.0.0",
-    "@mikro-orm/core": "^6.6.0",
-    "@mikro-orm/knex": "^6.6.0",
+    "@cleverJS/condition-builder": "^1.0.4",
+    "@mikro-orm/core": "^6.6.7",
+    "@mikro-orm/knex": "^6.6.7",
     "knex": "^3.1.0",
     "pg": "^8.0.0",
     "pg-copy-streams": "^7.0.0"
@@ -82,12 +82,12 @@
     }
   },
   "devDependencies": {
-    "@cleverJS/condition-builder": "=1.0.3",
+    "@cleverJS/condition-builder": "^1.0.4",
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
-    "@mikro-orm/core": "^6.6.5",
-    "@mikro-orm/knex": "^6.6.5",
-    "@mikro-orm/postgresql": "^6.6.5",
+    "@mikro-orm/core": "^6.6.7",
+    "@mikro-orm/knex": "^6.6.7",
+    "@mikro-orm/postgresql": "^6.6.7",
     "@swc/cli": "^0.7.10",
     "@swc/core": "^1.15.10",
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",

@@ -16,15 +16,17 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const connection: Client = await client.acquireConnection()
 
-    // Quote all column names to handle reserved words and special characters
+    // Escape SQL identifiers by doubling embedded double-quotes
+    const escapeId = (name: string) => `"${name.replace(/"/g, '""')}"`
+
     const columns = Object.values(objectToDBmapping)
-      .map((columnName) => `"${columnName}"`)
+      .map((columnName) => escapeId(columnName))
       .join(', ')
 
     let rowCount = 0
 
     try {
-      const sql = `COPY "${table}" (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
+      const sql = `COPY ${escapeId(table)} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
       const copyStream = connection.query(from(sql))
 
       // Transform stream and count rows

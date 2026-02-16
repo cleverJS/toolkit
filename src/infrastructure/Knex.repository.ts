@@ -12,6 +12,8 @@ import { IMapper, IRepository } from './IRepository'
 import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
+const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
+
 export interface IKnexRepositoryConfig {
   table: string
   primary?: string[]
@@ -74,6 +76,7 @@ export class KnexRepository<
       throw new Error('Sort is required when paginator is used')
     }
 
+    this.#validateSelectFields(select)
     const qb = this.knex(this.config.table).select(select)
 
     this.#applyCondition(qb, condition)
@@ -153,6 +156,7 @@ export class KnexRepository<
   public stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R> {
     const { select = '*', paginator, condition, sort } = payload
 
+    this.#validateSelectFields(select)
     const qb = this.knex(this.config.table).select(select)
 
     if (paginator) {
@@ -213,6 +217,9 @@ export class KnexRepository<
       return
     }
     for (const [field, dir] of Object.entries(sort)) {
+      if (!SAFE_IDENTIFIER_RE.test(field)) {
+        throw new Error(`Invalid sort field name: ${field}`)
+      }
       qb.orderBy(field, dir)
     }
   }
@@ -226,6 +233,16 @@ export class KnexRepository<
     }
     if (paginator.getOffset()) {
       qb.offset(paginator.getOffset())
+    }
+  }
+
+  #validateSelectFields(select: string | string[]): void {
+    const fields = Array.isArray(select) ? select : [select]
+    for (const field of fields) {
+      if (field === '*') continue
+      if (!SAFE_IDENTIFIER_RE.test(field)) {
+        throw new Error(`Invalid select field name: ${field}`)
+      }
     }
   }
 

@@ -1,5 +1,7 @@
 import { ICloner } from './ICloner'
 
+const DANGEROUS_PROTO_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
 export class JSONCloner implements ICloner {
   public clone<T>(data: T): T {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -14,6 +16,9 @@ export class JSONCloner implements ICloner {
     }
 
     for (const [key, value] of Object.entries(data)) {
+      if (DANGEROUS_PROTO_KEYS.has(key)) {
+        continue
+      }
       if (value instanceof Date) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         cloned[key] = new Date(cloned[key])
