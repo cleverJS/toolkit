@@ -43,6 +43,14 @@ export function isEmptyObject(obj: Record<string, unknown>): boolean {
   return true
 }
 
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const proto: unknown = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
 export function intersect(setA: Set<any>, setB: Set<any>) {
   return new Set([...setA].filter((x) => setB.has(x)))
 }

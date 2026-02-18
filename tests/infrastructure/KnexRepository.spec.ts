@@ -1,10 +1,9 @@
 import { AdapterType, Condition, ConditionAdapterRegistry, ConditionBuilder, KnexConditionAdapter } from '@cleverJS/condition-builder'
 import knex, { Knex } from 'knex'
-import { PropertySchema } from 'src/utils/types/types'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IMapper, KnexConnectionScope, KnexRepository, Paginator } from '../../src'
+import { FieldMapper, KnexConnectionScope, KnexRepository, Paginator } from '../../src'
 
 describe('KnexRepository', () => {
   let db: Knex
@@ -47,12 +46,13 @@ describe('KnexRepository', () => {
 
     scope = new KnexConnectionScope(db)
 
-    repository = new KnexRepository<UserDBEntity, User>(scope, new UserMapper(), {
-      table: 'test_knex_users',
-      primary: ['email'],
-    })
+    repository = new KnexRepository<UserDBEntity, User>(
+      scope,
+      new FieldMapper<User, UserDBEntity>({ isActive: 'is_active', createdAt: 'created_at' }),
+      { table: 'test_knex_users', primary: ['email'] }
+    )
 
-    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(scope, new JobMapper(), {
+    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(scope, new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }), {
       table: 'test_knex_jobs',
       primary: ['id'],
     })
@@ -156,7 +156,7 @@ describe('KnexRepository', () => {
         createdAt: new Date(),
       })
 
-      const condition: Condition = ConditionBuilder.create({ age: { $lt: 20 }, is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ age: { $lt: 20 }, isActive: true }).build()
       const user = await repository.findOne(condition)
 
       expect(user).toBeDefined()
@@ -184,7 +184,7 @@ describe('KnexRepository', () => {
     })
 
     it('should find users with condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
       const users = await repository.findAll({ condition })
 
       expect(users).toHaveLength(3)
@@ -279,7 +279,7 @@ describe('KnexRepository', () => {
     })
 
     it('should apply condition with select', async () => {
-      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
       const result = await repository.findPartial<{ email: string }>({
         select: ['email'],
         condition,
@@ -314,7 +314,7 @@ describe('KnexRepository', () => {
     })
 
     it('should count users with condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
       const count = await repository.count(condition)
 
       expect(count).toBe(2)
@@ -328,7 +328,7 @@ describe('KnexRepository', () => {
     })
 
     it('should count with complex condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ age: { $gte: 25 }, is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ age: { $gte: 25 }, isActive: true }).build()
 
       const count = await repository.count(condition)
 
@@ -412,7 +412,7 @@ describe('KnexRepository', () => {
         { email: 'u3@example.com', name: 'User 3', age: 35, isActive: false, createdAt: new Date() },
       ])
 
-      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
       const count = await repository.update(condition, { age: 99 })
 
       expect(count).toBe(2)
@@ -438,7 +438,7 @@ describe('KnexRepository', () => {
         { email: 'keep@example.com', name: 'Keep', age: 35, isActive: false, createdAt: new Date() },
       ])
 
-      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
       const deletedCount = await repository.delete(condition)
 
       expect(deletedCount).toBe(2)
@@ -502,7 +502,7 @@ describe('KnexRepository', () => {
 
     it('should stream all users', async () => {
       const stream = repository.stream<User>({
-        select: ['email', 'name', 'age', 'is_active', 'created_at', 'bio'],
+        select: ['email', 'name', 'age', 'isActive', 'createdAt', 'bio'],
         sort: { age: 'asc' },
       })
       const users: User[] = []
@@ -517,9 +517,9 @@ describe('KnexRepository', () => {
     })
 
     it('should stream with condition', async () => {
-      const condition: Condition = ConditionBuilder.create({ is_active: true }).build()
+      const condition: Condition = ConditionBuilder.create({ isActive: true }).build()
       const stream = repository.stream<User>({
-        select: ['email', 'name', 'age', 'is_active', 'created_at', 'bio'],
+        select: ['email', 'name', 'age', 'isActive', 'createdAt', 'bio'],
         condition,
         sort: { age: 'asc' },
       })
@@ -537,7 +537,7 @@ describe('KnexRepository', () => {
       const paginator = new Paginator({ page: 1, perPage: 2 })
 
       const stream = repository.stream<User>({
-        select: ['email', 'name', 'age', 'is_active', 'created_at', 'bio'],
+        select: ['email', 'name', 'age', 'isActive', 'createdAt', 'bio'],
         paginator,
         sort: { age: 'asc' },
       })
@@ -587,7 +587,6 @@ describe('KnexRepository', () => {
 
       expect(insertedCount).toBe(0)
     })
-
   })
 
   describe('primary key', () => {
@@ -846,77 +845,6 @@ interface Job {
   id?: number
   name: string
   createdAt: Date
-}
-
-// Mappers
-class UserMapper implements IMapper<User, UserDBEntity> {
-  toPersistence(domain: Partial<PropertySchema<User>>): Partial<UserDBEntity> {
-    const entity: Partial<UserDBEntity> = {}
-
-    if (domain.email !== undefined) entity.email = domain.email
-    if (domain.name !== undefined) entity.name = domain.name
-    if (domain.age !== undefined) entity.age = domain.age
-    if (domain.isActive !== undefined) entity.is_active = domain.isActive
-    if (domain.createdAt !== undefined) entity.created_at = domain.createdAt
-    if (domain.bio !== undefined) entity.bio = domain.bio
-
-    return entity
-  }
-
-  toDomain(entity: UserDBEntity): User {
-    return {
-      email: entity.email,
-      name: entity.name,
-      age: entity.age,
-      isActive: entity.is_active,
-      createdAt: entity.created_at,
-      bio: entity.bio,
-    }
-  }
-
-  toEntity(domain: Partial<User>): UserDBEntity {
-    return {
-      email: domain.email || '',
-      name: domain.name || '',
-      age: domain.age || 0,
-      is_active: domain.isActive !== undefined ? domain.isActive : true,
-      created_at: domain.createdAt || new Date(),
-      bio: domain.bio,
-    }
-  }
-}
-
-class JobMapper implements IMapper<Job, JobDBEntity> {
-  toPersistence(domain: Partial<PropertySchema<Job>>): Partial<JobDBEntity> {
-    const entity: Partial<JobDBEntity> = {}
-
-    if (domain.id !== undefined) entity.id = domain.id
-    if (domain.name !== undefined) entity.name = domain.name
-    if (domain.createdAt !== undefined) entity.created_at = domain.createdAt
-
-    return entity
-  }
-
-  toDomain(entity: JobDBEntity): Job {
-    return {
-      id: entity.id,
-      name: entity.name,
-      createdAt: entity.created_at,
-    }
-  }
-
-  toEntity(domain: Partial<Job>): JobDBEntity {
-    const entity: JobDBEntity = {
-      name: domain.name || '',
-      created_at: domain.createdAt || new Date(),
-    }
-
-    if (domain.id !== undefined) {
-      entity.id = domain.id
-    }
-
-    return entity
-  }
 }
 
 function jsonToStream<T>(arr: T[]): PassThrough & AsyncIterable<T> {

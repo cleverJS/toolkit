@@ -60,7 +60,9 @@ const condition = ConditionBuilder.create({ name: 'Alice', age: 30 }).build()
 await repository.findAll({ condition })
 ```
 
-The condition builder is what makes `IRepository` truly ORM-independent: your services build conditions using domain field names, and each repository implementation serializes them to its native query format.
+The condition builder is what makes `IRepository` truly ORM-independent: your services build conditions once, and each repository implementation serializes them to its native query format.
+
+> **Note:** When a mapper with field mapping is used (e.g. `FieldMapper`, `MikroFieldMapper`), condition field names, sort keys, and select fields accept **domain field names** (e.g. `isActive` instead of `is_active`). The repository automatically translates them to DB column names using the mapper's `getFieldMapping()`. Fields not in the mapping pass through unchanged.
 
 ## Architecture
 
@@ -74,6 +76,11 @@ src/
 │   │   ├── IConnectionScope.ts
 │   │   ├── KnexConnectionScope.ts
 │   │   └── MikroConnectionScope.ts
+│   ├── mapper/                 # Built-in mapper implementations
+│   │   ├── IdentityMapper.ts
+│   │   ├── FieldMapper.ts
+│   │   ├── MikroIdentityMapper.ts
+│   │   └── MikroFieldMapper.ts
 │   └── bulk-insert/            # Bulk insert strategies
 │       ├── IBulkInsertStrategy.ts
 │       ├── PostgresBulkInsertStrategy.ts
@@ -107,19 +114,24 @@ interface IRepository<DomainEntity, PrimaryKey extends keyof DomainEntity = neve
 }
 ```
 
-`IMapper<DomainEntity, DBEntity>` separates your domain models from database entities:
+`IMapper<DomainEntity, DBEntity>` separates your domain models from database entities. `PropertySchema<T>` is a utility type that strips methods from `T`, keeping only data properties.
 
 ```typescript
 interface IMapper<DomainEntity, DBEntity> {
   toDomain(entity: DBEntity): DomainEntity
   toEntity(data: DomainEntity): DBEntity
   toPersistence(domain: Partial<PropertySchema<DomainEntity>>): Partial<DBEntity>
+  getFieldMapping(): Record<string, string> | undefined
 }
 ```
+
+`getFieldMapping()` returns a `Record<domainField, dbField>` when the mapper renames fields, or `undefined` for identity mappers. Repositories use this to translate sort keys, select fields, and condition field names from domain to DB column names automatically.
 
 **Example — defining a domain model, DB entity, and mapper:**
 
 ```typescript
+import { IMapper, PropertySchema } from '@cleverjs/toolkit'
+
 // Domain model — what your services work with
 interface User {
   email: string
@@ -167,18 +179,81 @@ class UserMapper implements IMapper<User, UserDBEntity> {
     if (domain.isActive !== undefined) entity.is_active = domain.isActive
     return entity
   }
+
+  getFieldMapping(): Record<string, string> | undefined {
+    return { isActive: 'is_active', createdAt: 'created_at' }
+  }
 }
 ```
+
+### Built-in Mappers
+
+For most cases you don't need a hand-written mapper. The toolkit provides four built-in implementations:
+
+| Mapper | Use case |
+|---|---|
+| `IdentityMapper<Entity>` | Knex — domain and DB shapes are identical |
+| `FieldMapper<Domain, DBEntity>` | Knex — domain and DB have different field names |
+| `MikroIdentityMapper<Domain, DBEntity>` | MikroORM — same field names, produces class instances |
+| `MikroFieldMapper<Domain, DBEntity>` | MikroORM — different field names, produces class instances |
+
+**Knex — same field names (identity mapping):**
+
+```typescript
+import { IdentityMapper } from '@cleverjs/toolkit'
+
+const mapper = new IdentityMapper<User>()
+
+// Optionally restrict which fields are mapped
+const mapper = new IdentityMapper<User>(['email', 'name', 'age'])
+```
+
+**Knex — different field names:**
+
+```typescript
+import { FieldMapper } from '@cleverjs/toolkit'
+
+// Keys are domain field names, values are DB column names.
+// Only differing fields need to be listed — matching names pass through automatically.
+const mapper = new FieldMapper<User, UserDBEntity>({
+  isActive: 'is_active',
+  createdAt: 'created_at',
+})
+```
+
+**MikroORM — same field names:**
+
+MikroORM's identity map and change tracking require entity class instances, not plain objects. The `Mikro*` mappers call `new EntityClass()` + `Object.assign()` in `toEntity()` to satisfy this. That's why they take two type parameters (`Domain` and `DBEntity`) even when field names match — the domain is a plain interface while the DB entity is a class extending `BaseEntity`:
+
+```typescript
+import { MikroIdentityMapper } from '@cleverjs/toolkit'
+
+const mapper = new MikroIdentityMapper<User, UserEntity>(UserEntity)
+```
+
+**MikroORM — different field names:**
+
+```typescript
+import { MikroFieldMapper } from '@cleverjs/toolkit'
+
+const mapper = new MikroFieldMapper<User, UserEntity>(UserEntity, {
+  isActive: 'is_active',
+  createdAt: 'created_at',
+})
+```
+
+You can always implement `IMapper` directly for complex transformations (computed fields, nested objects, etc.) — the built-in mappers cover the common case of flat field renaming.
 
 **Creating a repository — Knex:**
 
 ```typescript
-import { KnexConnectionScope, KnexRepository } from '@cleverjs/toolkit'
+import { KnexConnectionScope, KnexRepository, FieldMapper } from '@cleverjs/toolkit'
 import knex from 'knex'
 
 const db = knex({ client: 'pg', connection: '...' })
 const scope = new KnexConnectionScope(db)
-const userRepo = new KnexRepository<UserDBEntity, User>(scope, new UserMapper(), {
+const mapper = new FieldMapper<User, UserDBEntity>({ isActive: 'is_active', createdAt: 'created_at' })
+const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
   table: 'users',
   primary: ['email'],
 })
@@ -187,11 +262,12 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, new UserMapper(),
 **Creating a repository — MikroORM:**
 
 ```typescript
-import { MikroConnectionScope, MikroRepository } from '@cleverjs/toolkit'
+import { MikroConnectionScope, MikroRepository, MikroIdentityMapper } from '@cleverjs/toolkit'
 
 const em = orm.em.fork()
 const scope = new MikroConnectionScope(em)
-const userRepo = new MikroRepository<UserEntity, User>(scope, UserEntity, new UserMapper())
+const mapper = new MikroIdentityMapper<User, UserEntity>(UserEntity)
+const userRepo = new MikroRepository<UserEntity, User>(scope, UserEntity, mapper)
 ```
 
 **Using the repository in a service (ORM-agnostic):**
@@ -201,15 +277,13 @@ class UserService {
   constructor(private readonly repo: IRepository<User>) {}
 
   async getActiveUsers(paginator: Paginator): Promise<User[]> {
-    const condition = ConditionBuilder.create({ is_active: true }).build()
+    const condition = ConditionBuilder.create({ isActive: true }).build()
     return this.repo.findAll({ condition, paginator, sort: { name: 'asc' } })
   }
 }
 ```
 
-The service depends only on `IRepository<User>` — it doesn't know or care whether it's backed by Knex or MikroORM.
-
-> **Note:** Condition field names and sort keys use **database column names** (snake_case), not domain field names. The mapper handles conversion for insert/update data, but conditions and sort are passed directly to the query builder.
+The service depends only on `IRepository<User>` — it doesn't know or care whether it's backed by Knex or MikroORM. Conditions and sort use domain field names (`isActive`, not `is_active`).
 
 ### Connection Scope (Transactions)
 

@@ -1,10 +1,9 @@
 import { BaseEntity, Entity, EntityManager, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
 import { PostgreSqlDriver } from '@mikro-orm/postgresql'
-import { PropertySchema } from 'src/utils/types/types'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IMapper, MikroConnectionScope, MikroRepository } from '../../../src'
+import { IdentityMapper, MikroConnectionScope, MikroRepository } from '../../../src'
 
 // Test Entity
 @Entity({ tableName: 'test_products' })
@@ -40,49 +39,6 @@ interface Product {
   description?: string
   isActive: boolean
   metadata?: Record<string, any>
-}
-
-// Mapper
-class ProductMapper implements IMapper<Product, ProductEntity> {
-  toPersistence(domain: Partial<PropertySchema<Product>>): Partial<ProductEntity> {
-    const entity: ProductEntity = new ProductEntity()
-
-    if (domain.id !== undefined) entity.id = domain.id
-    if (domain.name !== undefined) entity.name = domain.name
-    if (domain.price !== undefined) entity.price = domain.price
-    if (domain.createdAt !== undefined) entity.createdAt = domain.createdAt
-    if (domain.description !== undefined) entity.description = domain.description
-    if (domain.isActive !== undefined) entity.isActive = domain.isActive
-    if (domain.metadata !== undefined) entity.metadata = domain.metadata
-
-    return entity
-  }
-
-  toDomain(entity: ProductEntity): Product {
-    return {
-      id: entity.id,
-      name: entity.name,
-      price: entity.price,
-      createdAt: entity.createdAt,
-      description: entity.description,
-      isActive: entity.isActive,
-      metadata: entity.metadata,
-    }
-  }
-
-  toEntity(domain: Partial<Product>): ProductEntity {
-    const entity: ProductEntity = new ProductEntity()
-
-    if (domain.id !== undefined) entity.id = domain.id
-    entity.name = domain.name || ''
-    entity.price = domain.price || 0
-    entity.createdAt = domain.createdAt || new Date()
-    entity.description = domain.description
-    entity.isActive = domain.isActive = false
-    entity.metadata = domain.metadata
-
-    return entity
-  }
 }
 
 function jsonToStream<T>(arr: T[]): PassThrough & AsyncIterable<T> {
@@ -127,8 +83,7 @@ describe('PostgreSQL Bulk Insert', () => {
 
     // Initialize repository
     const scope = new MikroConnectionScope(em)
-    const mapper = new ProductMapper()
-    repository = new MikroRepository<ProductEntity, Product>(scope, ProductEntity, mapper)
+    repository = new MikroRepository<ProductEntity, Product>(scope, ProductEntity, new IdentityMapper<Product>())
 
   })
 

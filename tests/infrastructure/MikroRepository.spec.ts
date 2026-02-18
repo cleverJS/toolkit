@@ -8,11 +8,10 @@ import {
 } from '@cleverJS/condition-builder'
 import { BaseEntity, Entity, EntityManager, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
 import { PostgreSqlDriver } from '@mikro-orm/postgresql'
-import { PropertySchema } from 'src/utils/types/types'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IMapper, MikroConnectionScope, MikroRepository, Paginator } from '../../src'
+import { MikroIdentityMapper, MikroConnectionScope, MikroRepository, Paginator } from '../../src'
 
 describe('MikroRepository', () => {
   let orm: MikroORM
@@ -46,8 +45,8 @@ describe('MikroRepository', () => {
 
     // Initialize scope and repositories
     scope = new MikroConnectionScope(em)
-    repository = new MikroRepository<UserEntity, User>(scope, UserEntity, new UserMapper())
-    repositoryJob = new MikroRepository<JobEntity, Job, 'id'>(scope, JobEntity, new JobMapper())
+    repository = new MikroRepository<UserEntity, User>(scope, UserEntity, new MikroIdentityMapper<User, UserEntity>(UserEntity))
+    repositoryJob = new MikroRepository<JobEntity, Job, 'id'>(scope, JobEntity, new MikroIdentityMapper<Job, JobEntity>(JobEntity))
   })
 
   afterAll(async () => {
@@ -337,10 +336,10 @@ describe('MikroRepository', () => {
 
       const condition: Condition = ConditionBuilder.create({ email: user.email }).build()
 
-      const updatedUser = await repository.updateOne(condition, { name: 'Updated Name', age: 26 })
+      const updatedUser = await repository.updateOne(condition, { name: 'Updated Name' })
 
       expect(updatedUser.name).toBe('Updated Name')
-      expect(updatedUser.age).toBe(26)
+      expect(updatedUser.age).toBe(25)
       expect(updatedUser.email).toBe('update@example.com') // unchanged
     })
 
@@ -531,7 +530,6 @@ describe('MikroRepository', () => {
 
       expect(insertedCount).toBe(0)
     })
-
   })
 
   describe('primary key', () => {
@@ -827,76 +825,6 @@ interface Job {
   id?: number
   name: string
   createdAt: Date
-}
-
-// Mapper
-class UserMapper implements IMapper<User, UserEntity> {
-  toPersistence(domain: Partial<PropertySchema<User>>): Partial<UserEntity> {
-    const entity: Partial<UserEntity> = {}
-
-    if (domain.email !== undefined) entity.email = domain.email
-    if (domain.name !== undefined) entity.name = domain.name
-    if (domain.age !== undefined) entity.age = domain.age
-    if (domain.isActive !== undefined) entity.isActive = domain.isActive
-    if (domain.createdAt !== undefined) entity.createdAt = domain.createdAt
-    if (domain.bio !== undefined) entity.bio = domain.bio
-
-    return entity
-  }
-
-  toDomain(entity: UserEntity): User {
-    return {
-      email: entity.email,
-      name: entity.name,
-      age: entity.age,
-      isActive: entity.isActive,
-      createdAt: entity.createdAt,
-      bio: entity.bio,
-    }
-  }
-
-  toEntity(domain: Partial<User>): UserEntity {
-    const entity = new UserEntity()
-
-    entity.email = domain.email || ''
-    entity.name = domain.name || ''
-    entity.age = domain.age || 0
-    entity.isActive = domain.isActive !== undefined ? domain.isActive : true
-    entity.createdAt = domain.createdAt || new Date()
-    entity.bio = domain.bio
-
-    return entity
-  }
-}
-
-class JobMapper implements IMapper<Job, JobEntity> {
-  toPersistence(domain: Partial<PropertySchema<Job>>): Partial<JobEntity> {
-    const entity: Partial<JobEntity> = {}
-
-    if (domain.id !== undefined) entity.id = domain.id
-    if (domain.name !== undefined) entity.name = domain.name
-    if (domain.createdAt !== undefined) entity.createdAt = domain.createdAt
-
-    return entity
-  }
-
-  toDomain(entity: JobEntity): Job {
-    return {
-      id: entity.id,
-      name: entity.name,
-      createdAt: entity.createdAt,
-    }
-  }
-
-  toEntity(domain: Partial<Job>): JobEntity {
-    const entity = new JobEntity()
-
-    if (domain.id !== undefined) entity.id = domain.id
-    entity.name = domain.name || ''
-    entity.createdAt = domain.createdAt || new Date()
-
-    return entity
-  }
 }
 
 function jsonToStream<T>(arr: T[]): PassThrough & AsyncIterable<T> {

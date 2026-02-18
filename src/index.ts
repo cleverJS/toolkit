@@ -6,6 +6,7 @@ export { IRepository, IMapper } from './infrastructure/IRepository'
 export { MikroRepository } from './infrastructure/Mikro.repository'
 export { KnexRepository, IKnexRepositoryConfig } from './infrastructure/Knex.repository'
 export { IFindAll, IFindAllWithSelect, ISort } from './infrastructure/types'
+export { FieldMapper, FieldMapping, IdentityMapper, MikroIdentityMapper, MikroFieldMapper } from './infrastructure/mapper'
 
 // Connection Scope
 export { IConnectionScope, IsolationLevel, TransactionOptions } from './infrastructure/scope'
@@ -23,7 +24,7 @@ export {
 
 // Utils
 export { Cloner, ICloneable } from './utils/clone'
-export { removeNullish, removeUndefined, getKeyByValue, isEmptyObject, intersect } from './utils/helpers/object'
+export { removeNullish, removeUndefined, getKeyByValue, isEmptyObject, isPlainObject, intersect } from './utils/helpers/object'
 export { Paginator, IPaginatorOptions } from './utils/Paginator'
 export { KnexHelper } from './utils/KnexHelper'
 export { peekAndReplayStream } from './utils/helpers/streams'

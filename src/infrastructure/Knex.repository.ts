@@ -2,7 +2,7 @@ import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier 
 import { Knex } from 'knex'
 import { PassThrough, Transform } from 'stream'
 
-import { removeUndefined } from '../utils/helpers/object'
+import { isPlainObject, removeUndefined } from '../utils/helpers/object'
 import { peekAndReplayStream } from '../utils/helpers/streams'
 import { Paginator } from '../utils/Paginator'
 import { PropertySchema } from '../utils/types/types'
@@ -76,8 +76,9 @@ export class KnexRepository<
       throw new Error('Sort is required when paginator is used')
     }
 
-    this.#validateSelectFields(select)
-    const qb = this.knex(this.config.table).select(select)
+    const mappedSelect = this.#mapSelect(select)
+    this.#validateSelectFields(mappedSelect)
+    const qb = this.knex(this.config.table).select(mappedSelect)
 
     this.#applyCondition(qb, condition)
     this.#applySort(qb, sort)
@@ -108,6 +109,12 @@ export class KnexRepository<
 
   public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
     const updateEntity = this.mapper.toPersistence(data)
+    if (!isPlainObject(updateEntity)) {
+      throw new Error(
+        'toPersistence() must return a plain object, not a class instance. ' +
+          'Class instances carry default field values that corrupt partial updates.'
+      )
+    }
     const cleanedEntity = removeUndefined(updateEntity as Record<string, unknown>)
 
     const qb = this.knex(this.config.table).select('*')
@@ -135,6 +142,12 @@ export class KnexRepository<
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
     const updateEntity = this.mapper.toPersistence(data)
+    if (!isPlainObject(updateEntity)) {
+      throw new Error(
+        'toPersistence() must return a plain object, not a class instance. ' +
+          'Class instances carry default field values that corrupt partial updates.'
+      )
+    }
     const cleanedEntity = removeUndefined(updateEntity as Record<string, unknown>)
 
     const qb = this.knex(this.config.table).update(cleanedEntity)
@@ -156,8 +169,9 @@ export class KnexRepository<
   public stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R> {
     const { select = '*', paginator, condition, sort } = payload
 
-    this.#validateSelectFields(select)
-    const qb = this.knex(this.config.table).select(select)
+    const mappedSelect = this.#mapSelect(select)
+    this.#validateSelectFields(mappedSelect)
+    const qb = this.knex(this.config.table).select(mappedSelect)
 
     if (paginator) {
       if (!sort) {
@@ -202,13 +216,26 @@ export class KnexRepository<
     })
   }
 
+  #mapField(field: string): string {
+    const mapping = this.mapper.getFieldMapping()
+    if (!mapping) return field
+    return mapping[field] ?? field
+  }
+
+  // eslint-disable-next-line sonarjs/function-return-type
+  #mapSelect(select: string | string[]): string | string[] {
+    if (!Array.isArray(select)) return select === '*' ? select : this.#mapField(select)
+    return select.map((f) => (f === '*' ? f : this.#mapField(f)))
+  }
+
   #applyCondition(qb: Knex.QueryBuilder, condition?: Condition): void {
     if (condition == null) {
       return
     }
 
     const serializer = ConditionAdapterRegistry.getInstance().getSerializer<KnexConditionApplier>(AdapterType.KNEX)
-    const applier = serializer.serialize(condition)
+    const fieldMapping = this.mapper.getFieldMapping()
+    const applier = serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
     applier(qb)
   }
 
@@ -217,10 +244,11 @@ export class KnexRepository<
       return
     }
     for (const [field, dir] of Object.entries(sort)) {
-      if (!SAFE_IDENTIFIER_RE.test(field)) {
-        throw new Error(`Invalid sort field name: ${field}`)
+      const mapped = this.#mapField(field)
+      if (!SAFE_IDENTIFIER_RE.test(mapped)) {
+        throw new Error(`Invalid sort field name: ${mapped}`)
       }
-      qb.orderBy(field, dir)
+      qb.orderBy(mapped, dir)
     }
   }
 

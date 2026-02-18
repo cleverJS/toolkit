@@ -25,4 +25,5 @@ export interface IMapper<DomainEntity, DBEntity> {
   toDomain(entity: DBEntity): DomainEntity
   toEntity(data: DomainEntity): DBEntity
   toPersistence(domain: Partial<PropertySchema<DomainEntity>>): Partial<DBEntity>
+  getFieldMapping(): Record<string, string> | undefined
 }

@@ -15,7 +15,7 @@ import type { EntityData } from '@mikro-orm/core/typings'
 import { Knex } from '@mikro-orm/knex'
 import { PassThrough, Transform } from 'stream'
 
-import { removeUndefined } from '../utils/helpers/object'
+import { isPlainObject, removeUndefined } from '../utils/helpers/object'
 import { peekAndReplayStream } from '../utils/helpers/streams'
 import { KnexHelper } from '../utils/KnexHelper'
 import { Paginator } from '../utils/Paginator'
@@ -76,8 +76,9 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     if (sort) {
       const orderBy: Record<string, 'asc' | 'desc'> = {}
       for (const [field, dir] of Object.entries(sort)) {
-        MikroRepository.#validateIdentifier(field, 'sort')
-        orderBy[field] = dir
+        const mapped = this.#mapField(field)
+        MikroRepository.#validateIdentifier(mapped, 'sort')
+        orderBy[mapped] = dir
       }
       options.orderBy = orderBy as OrderDefinition<DBEntity>
     }
@@ -104,15 +105,17 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     }
 
     const filter = this.#serializeCondition(condition)
+    const mappedSelect = select ? this.#mapSelect(select) : select
     const options: FindAllOptions<DBEntity> = {
-      fields: select as unknown as FindAllOptions<DBEntity>['fields'],
+      fields: mappedSelect as unknown as FindAllOptions<DBEntity>['fields'],
     }
 
     if (sort) {
       const orderBy: Record<string, 'asc' | 'desc'> = {}
       for (const [field, dir] of Object.entries(sort)) {
-        MikroRepository.#validateIdentifier(field, 'sort')
-        orderBy[field] = dir
+        const mapped = this.#mapField(field)
+        MikroRepository.#validateIdentifier(mapped, 'sort')
+        orderBy[mapped] = dir
       }
       options.orderBy = orderBy as OrderDefinition<DBEntity>
     }
@@ -151,6 +154,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
     const updateEntity = this.mapper.toPersistence(data) as UpdateDto<DBEntity>
+    if (!isPlainObject(updateEntity)) {
+      throw new Error(
+        'toPersistence() must return a plain object, not a class instance. ' +
+          'Class instances carry default field values that corrupt partial updates.'
+      )
+    }
     const cleanedEntity = removeUndefined(updateEntity)
     const filter = this.#serializeCondition(condition)
 
@@ -174,6 +183,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
     const updateEntity = this.mapper.toPersistence(data) as EntityData<DBEntity>
+    if (!isPlainObject(updateEntity)) {
+      throw new Error(
+        'toPersistence() must return a plain object, not a class instance. ' +
+          'Class instances carry default field values that corrupt partial updates.'
+      )
+    }
     const cleanedEntity = removeUndefined(updateEntity)
     const filter = this.#serializeCondition(condition)
 
@@ -205,12 +220,13 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
     queryBuilder.from(this.getTable())
 
-    if (Array.isArray(select)) {
-      for (const field of select) {
+    const mappedSelect = this.#mapSelect(select)
+    if (Array.isArray(mappedSelect)) {
+      for (const field of mappedSelect) {
         if (field !== '*') MikroRepository.#validateIdentifier(field, 'select')
       }
     }
-    queryBuilder.select(select)
+    queryBuilder.select(mappedSelect)
 
     if (paginator) {
       if (!sort) {
@@ -222,14 +238,16 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
     if (sort) {
       for (const [field, dir] of Object.entries(sort)) {
-        MikroRepository.#validateIdentifier(field, 'sort')
-        queryBuilder.orderBy(field, dir)
+        const mapped = this.#mapField(field)
+        MikroRepository.#validateIdentifier(mapped, 'sort')
+        queryBuilder.orderBy(mapped, dir)
       }
     }
 
     if (condition) {
       const serializer = ConditionAdapterRegistry.getInstance().getSerializer<KnexConditionApplier>(AdapterType.KNEX)
-      const applier = serializer.serialize(condition)
+      const fieldMapping = this.mapper.getFieldMapping()
+      const applier = serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
       applier(queryBuilder)
     }
 
@@ -280,6 +298,18 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     return meta.tableName
   }
 
+  #mapField(field: string): string {
+    const mapping = this.mapper.getFieldMapping()
+    if (!mapping) return field
+    return mapping[field] ?? field
+  }
+
+  // eslint-disable-next-line sonarjs/function-return-type
+  #mapSelect(select: string | string[]): string | string[] {
+    if (!Array.isArray(select)) return select === '*' ? select : this.#mapField(select)
+    return select.map((f) => (f === '*' ? f : this.#mapField(f)))
+  }
+
   static #validateIdentifier(name: string, context: string): void {
     if (!SAFE_IDENTIFIER_RE.test(name)) {
       throw new Error(`Invalid ${context} field name: ${name}`)
@@ -303,7 +333,8 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     }
 
     const serializer = ConditionAdapterRegistry.getInstance().getSerializer<FilterQuery<DBEntity>>(AdapterType.MIKROORM)
-    return serializer.serialize(condition)
+    const fieldMapping = this.mapper.getFieldMapping()
+    return serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
   }
 
   #buildFieldMapping(item: DomainEntity): Record<string, string> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getKeyByValue, intersect, isEmptyObject, removeNullish, removeUndefined } from '../../src'
+import { getKeyByValue, intersect, isEmptyObject, isPlainObject, removeNullish, removeUndefined } from '../../src'
 
 describe('removeNullish', () => {
   it('should remove null and undefined values', () => {
@@ -86,6 +86,46 @@ describe('isEmptyObject', () => {
 
   it('should return false when nested object has a value', () => {
     expect(isEmptyObject({ a: { b: null, c: { d: 42 } } })).toBe(false)
+  })
+})
+
+describe('isPlainObject', () => {
+  it('should return true for empty object literal', () => {
+    expect(isPlainObject({})).toBe(true)
+  })
+
+  it('should return true for object with properties', () => {
+    expect(isPlainObject({ a: 1, b: 'hello' })).toBe(true)
+  })
+
+  it('should return true for Object.create(null)', () => {
+    expect(isPlainObject(Object.create(null))).toBe(true)
+  })
+
+  it('should return false for class instance', () => {
+    class Foo {
+      x = 1
+    }
+    expect(isPlainObject(new Foo())).toBe(false)
+  })
+
+  it('should return false for array', () => {
+    expect(isPlainObject([1, 2, 3])).toBe(false)
+  })
+
+  it('should return false for null', () => {
+    expect(isPlainObject(null)).toBe(false)
+  })
+
+  it('should return false for Date', () => {
+    expect(isPlainObject(new Date())).toBe(false)
+  })
+
+  it('should return false for primitives', () => {
+    expect(isPlainObject(42)).toBe(false)
+    expect(isPlainObject('string')).toBe(false)
+    expect(isPlainObject(true)).toBe(false)
+    expect(isPlainObject(undefined)).toBe(false)
   })
 })
 
