@@ -27,3 +27,8 @@ export interface IMapper<DomainEntity, DBEntity> {
   toPersistence(domain: Partial<PropertySchema<DomainEntity>>): Partial<DBEntity>
   getFieldMapping(): Record<string, string> | undefined
 }
+
+export interface IRepositoryHooks<DomainEntity> {
+  beforeInsert?(data: DomainEntity): DomainEntity
+  beforeUpdate?(data: Partial<PropertySchema<DomainEntity>>): Partial<PropertySchema<DomainEntity>>
+}

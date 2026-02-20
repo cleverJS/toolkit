@@ -11,7 +11,7 @@ import { PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { MikroIdentityMapper, MikroConnectionScope, MikroRepository, Paginator } from '../../src'
+import { IRepositoryHooks, MikroConnectionScope, MikroIdentityMapper, MikroRepository, Paginator } from '../../src'
 
 describe('MikroRepository', () => {
   let orm: MikroORM
@@ -771,6 +771,92 @@ describe('MikroRepository', () => {
       const condition = ConditionBuilder.create({ email: 'original@example.com' }).build()
       const found = await repository.findOne(condition)
       expect(found?.name).toBe('Original')
+    })
+  })
+
+  describe('hooks', () => {
+    const auditDate = new Date('2025-06-01T00:00:00Z')
+
+    let hookedRepository: MikroRepository<JobEntity, Job, 'id'>
+
+    beforeAll(() => {
+      const hooks: IRepositoryHooks<Job> = {
+        beforeInsert(data) {
+          return {
+            ...data,
+            createdAt: auditDate,
+          }
+        },
+        beforeUpdate(data) {
+          return { ...data, name: `modified:${data.name ?? ''}` }
+        },
+      }
+
+      hookedRepository = new MikroRepository<JobEntity, Job, 'id'>(scope, JobEntity, new MikroIdentityMapper<Job, JobEntity>(JobEntity), hooks)
+    })
+
+    beforeEach(async () => {
+      await em.execute('TRUNCATE TABLE "test_jobs" CASCADE')
+      em.clear()
+    })
+
+    it('should set createdAt via beforeInsert on insert', async () => {
+      const job = await hookedRepository.insert({ name: 'Hook Job' } as Omit<Job, 'id'>)
+
+      expect(job.createdAt).toEqual(auditDate)
+    })
+
+    it('should apply beforeInsert on insertMany', async () => {
+      const ids = await hookedRepository.insertMany<number[]>([
+        { name: 'Job 1' } as Omit<Job, 'id'>,
+        { name: 'Job 2', createdAt: new Date('2020-01-01T00:00:00Z') },
+      ])
+
+      expect(ids).toHaveLength(2)
+
+      const jobs = await hookedRepository.findAll({ sort: { id: 'asc' } })
+      expect(jobs[0].createdAt).toEqual(auditDate)
+      expect(jobs[1].createdAt).toEqual(auditDate)
+    })
+
+    it('should apply beforeUpdate on updateOne', async () => {
+      const job = await hookedRepository.insert({ name: 'Original', createdAt: new Date() })
+
+      const condition = ConditionBuilder.create({ id: job.id }).build()
+      const updated = await hookedRepository.updateOne(condition, { name: 'Changed' })
+
+      expect(updated.name).toBe('modified:Changed')
+    })
+
+    it('should apply beforeUpdate on update', async () => {
+      const job = await hookedRepository.insert({ name: 'Original', createdAt: new Date() })
+
+      const condition = ConditionBuilder.create({ id: job.id }).build()
+      const count = await hookedRepository.update(condition, { name: 'Changed' })
+
+      expect(count).toBe(1)
+
+      const found = await hookedRepository.findOne(condition)
+      expect(found?.name).toBe('modified:Changed')
+    })
+
+    it('should apply beforeInsert on bulkInsert', async () => {
+      const stream = jsonToStream<Job>([{ name: 'Bulk 1' } as Job, { name: 'Bulk 2', createdAt: new Date('2020-01-01T00:00:00Z') }])
+
+      const count = await hookedRepository.bulkInsert(stream)
+      expect(count).toBe(2)
+
+      const jobs = await hookedRepository.findAll({ sort: { name: 'asc' } })
+      expect(jobs).toHaveLength(2)
+      expect(jobs[0].createdAt).toEqual(auditDate)
+      expect(jobs[1].createdAt).toEqual(auditDate)
+    })
+
+    it('should work without hooks (no-op)', async () => {
+      const job = await repositoryJob.insert({ name: 'No Hooks', createdAt: new Date('2024-05-05') })
+
+      expect(job.name).toBe('No Hooks')
+      expect(job.createdAt).toEqual(new Date('2024-05-05'))
     })
   })
 })

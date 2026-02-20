@@ -98,6 +98,17 @@ interface IFindAllWithSelect extends IFindAll {
 interface ISort { [field: string]: 'asc' | 'desc' }
 ```
 
+### IRepositoryHooks\<DomainEntity\>
+
+Optional write lifecycle hooks passed to repository constructors. Runs before mapper transformation on all write paths (`insert`, `insertMany`, `updateOne`, `update`, `bulkInsert`).
+
+```ts
+interface IRepositoryHooks<DomainEntity> {
+  beforeInsert?(data: DomainEntity): DomainEntity
+  beforeUpdate?(data: Partial<PropertySchema<DomainEntity>>): Partial<PropertySchema<DomainEntity>>
+}
+```
+
 ### MikroRepository
 
 ```ts
@@ -109,7 +120,8 @@ class MikroRepository<
   constructor(
     scope: IConnectionScope<EntityManager>,
     entityClass: EntityName<DBEntity>,
-    mapper: IMapper<DomainEntity, DBEntity>
+    mapper: IMapper<DomainEntity, DBEntity>,
+    hooks?: IRepositoryHooks<DomainEntity>
   )
   protected getKnex(): Knex        // access underlying Knex
   protected getTable(): string      // table name from entity metadata
@@ -127,7 +139,8 @@ class KnexRepository<
   constructor(
     scope: IConnectionScope<Knex>,
     mapper: IMapper<DomainEntity, DBEntity>,
-    config: IKnexRepositoryConfig
+    config: IKnexRepositoryConfig,
+    hooks?: IRepositoryHooks<DomainEntity>
   )
 }
 

@@ -8,7 +8,7 @@ import { Paginator } from '../utils/Paginator'
 import { PropertySchema } from '../utils/types/types'
 
 import { IBulkInsertStrategy, resolveBulkInsertStrategy } from './bulk-insert'
-import { IMapper, IRepository } from './IRepository'
+import { IMapper, IRepository, IRepositoryHooks } from './IRepository'
 import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
@@ -30,7 +30,8 @@ export class KnexRepository<
   public constructor(
     protected readonly scope: IConnectionScope<Knex>,
     protected readonly mapper: IMapper<DomainEntity, DBEntity>,
-    protected readonly config: IKnexRepositoryConfig
+    protected readonly config: IKnexRepositoryConfig,
+    protected readonly hooks?: IRepositoryHooks<DomainEntity>
   ) {
     this.primary = config.primary
   }
@@ -98,7 +99,8 @@ export class KnexRepository<
   }
 
   public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
-    const entity = this.mapper.toEntity(data as DomainEntity)
+    const processed = this.hooks?.beforeInsert?.(data as DomainEntity) ?? data
+    const entity = this.mapper.toEntity(processed as DomainEntity)
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const [inserted] = await this.knex(this.config.table)
       .insert(entity as Record<string, unknown>)
@@ -108,6 +110,7 @@ export class KnexRepository<
   }
 
   public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
+    data = this.hooks?.beforeUpdate?.(data) ?? data
     const updateEntity = this.mapper.toPersistence(data)
     if (!isPlainObject(updateEntity)) {
       throw new Error(
@@ -141,6 +144,7 @@ export class KnexRepository<
   }
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
+    data = this.hooks?.beforeUpdate?.(data) ?? data
     const updateEntity = this.mapper.toPersistence(data)
     if (!isPlainObject(updateEntity)) {
       throw new Error(
@@ -160,7 +164,10 @@ export class KnexRepository<
       return [] as R
     }
 
-    const entities = items.map((i) => this.mapper.toEntity(i as DomainEntity) as Record<string, unknown>)
+    const processed = this.hooks?.beforeInsert
+      ? items.map((i) => this.hooks!.beforeInsert!(i as DomainEntity) as Omit<DomainEntity, TPrimaryKey>)
+      : items
+    const entities = processed.map((i) => this.mapper.toEntity(i as DomainEntity) as Record<string, unknown>)
     const result = await this.knex(this.config.table).insert(entities).returning('*')
 
     return result as R
@@ -206,7 +213,8 @@ export class KnexRepository<
       return 0
     }
 
-    const mapping = this.#buildFieldMapping(first)
+    const sample = this.hooks?.beforeInsert?.(first) ?? first
+    const mapping = this.#buildFieldMapping(sample)
     const entityStream = this.#createEntityStream(replayStream)
 
     const strategy = this.config.bulkInsertStrategy ?? resolveBulkInsertStrategy(this.knex)
@@ -317,12 +325,14 @@ export class KnexRepository<
 
   #createEntityStream(stream: PassThrough & AsyncIterable<DomainEntity>): PassThrough & AsyncIterable<DBEntity> {
     const mapper = this.mapper
+    const hooks = this.hooks
 
     const transform = new Transform({
       objectMode: true,
       transform(chunk: DomainEntity, _encoding, callback) {
         try {
-          const entity = mapper.toEntity(chunk)
+          const processed = hooks?.beforeInsert?.(chunk) ?? chunk
+          const entity = mapper.toEntity(processed)
           callback(null, entity)
         } catch (error) {
           callback(error as Error)

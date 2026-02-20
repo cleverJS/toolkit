@@ -22,7 +22,7 @@ import { Paginator } from '../utils/Paginator'
 import { PropertySchema } from '../utils/types/types'
 
 import { resolveBulkInsertStrategy } from './bulk-insert'
-import { IMapper, IRepository } from './IRepository'
+import { IMapper, IRepository, IRepositoryHooks } from './IRepository'
 import { IConnectionScope } from './scope/IConnectionScope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
@@ -39,7 +39,8 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   public constructor(
     protected readonly scope: IConnectionScope<EntityManager>,
     protected readonly entityClass: EntityName<DBEntity>,
-    protected readonly mapper: IMapper<DomainEntity, DBEntity>
+    protected readonly mapper: IMapper<DomainEntity, DBEntity>,
+    protected readonly hooks?: IRepositoryHooks<DomainEntity>
   ) {
     const meta = this.em.getMetadata().get(this.entityClass)
     this.primary = meta.primaryKeys
@@ -145,7 +146,8 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
-    const entity = this.mapper.toEntity(data as DomainEntity)
+    const processed = this.hooks?.beforeInsert?.(data as DomainEntity) ?? data
+    const entity = this.mapper.toEntity(processed as DomainEntity)
     const nextEntity = this.em.create(this.entityClass, entity as never)
     await this.em.persist(nextEntity).flush()
 
@@ -153,6 +155,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
+    data = this.hooks?.beforeUpdate?.(data) ?? data
     const updateEntity = this.mapper.toPersistence(data) as UpdateDto<DBEntity>
     if (!isPlainObject(updateEntity)) {
       throw new Error(
@@ -182,6 +185,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
+    data = this.hooks?.beforeUpdate?.(data) ?? data
     const updateEntity = this.mapper.toPersistence(data) as EntityData<DBEntity>
     if (!isPlainObject(updateEntity)) {
       throw new Error(
@@ -200,7 +204,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       return [] as R
     }
 
-    const entities = items.map((i) => this.mapper.toEntity(i as DomainEntity))
+    const processed = this.hooks?.beforeInsert
+      ? items.map((i) => this.hooks!.beforeInsert!(i as DomainEntity) as Omit<DomainEntity, TPrimaryKey>)
+      : items
+    const entities = processed.map((i) => this.mapper.toEntity(i as DomainEntity))
     // MikroORM's insertMany() requires MikroEntity[] or RequiredEntityData[], but our mapper returns Partial<EntityDTO>[]
     // We use type assertion because at runtime the mapper provides the correct structure
     const nextEntities = await this.repository.insertMany(entities as unknown as RequiredEntityData<DBEntity>[])
@@ -274,8 +281,11 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       return 0
     }
 
+    // Apply hook to peeked item so field mapping includes hook-added fields
+    const sample = this.hooks?.beforeInsert?.(first) ?? first
+
     // Build field mapping from entity properties to DB columns
-    const mapping = this.#buildFieldMapping(first)
+    const mapping = this.#buildFieldMapping(sample)
 
     // Convert domain entities to database entities stream
     const entityStream = this.#createEntityStream(replayStream)
@@ -397,12 +407,14 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   #createEntityStream(stream: PassThrough & AsyncIterable<DomainEntity>): PassThrough & AsyncIterable<DBEntity> {
     const mapper = this.mapper
+    const hooks = this.hooks
 
     const transform = new Transform({
       objectMode: true,
       transform(chunk: DomainEntity, _encoding, callback) {
         try {
-          const entity = mapper.toEntity(chunk)
+          const processed = hooks?.beforeInsert?.(chunk) ?? chunk
+          const entity = mapper.toEntity(processed)
           callback(null, entity)
         } catch (error) {
           callback(error as Error)

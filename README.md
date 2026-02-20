@@ -270,6 +270,36 @@ const mapper = new MikroIdentityMapper<User, UserEntity>(UserEntity)
 const userRepo = new MikroRepository<UserEntity, User>(scope, UserEntity, mapper)
 ```
 
+### Repository Hooks
+
+`IRepositoryHooks<DomainEntity>` provides write lifecycle hooks that run before mapper transformation on all write paths (`insert`, `insertMany`, `updateOne`, `update`, `bulkInsert`). Both `MikroRepository` and `KnexRepository` accept hooks as an optional constructor parameter. Use this for cross-cutting concerns like audit columns, timestamps, or data enrichment.
+
+```typescript
+import { IRepositoryHooks } from '@cleverjs/toolkit'
+
+const hooks: IRepositoryHooks<User> = {
+  beforeInsert(data) {
+    return { ...data, createdAt: new Date(), createdBy: getCurrentUserId() }
+  },
+  beforeUpdate(data) {
+    return { ...data, modifiedAt: new Date(), modifiedBy: getCurrentUserId() }
+  },
+}
+
+// Works with both repository implementations
+const mikroRepo = new MikroRepository<UserEntity, User>(scope, UserEntity, mapper, hooks)
+const knexRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, { table: 'users', primary: ['email'] }, hooks)
+```
+
+Hooks are plain functions — testable in isolation without any ORM infrastructure:
+
+```typescript
+it('should stamp createdAt on insert', () => {
+  const result = hooks.beforeInsert!({ name: 'Alice' } as User)
+  expect(result.createdAt).toBeInstanceOf(Date)
+})
+```
+
 **Using the repository in a service (ORM-agnostic):**
 
 ```typescript
