@@ -23,12 +23,18 @@ import { PropertySchema } from '../utils/types/types'
 
 import { resolveBulkInsertStrategy } from './bulk-insert'
 import { IMapper, IRepository, IRepositoryHooks } from './IRepository'
-import { IConnectionScope } from './scope/IConnectionScope'
+import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
 const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
 
 type PrimaryKey = string | number
+
+export interface IMikroRepositoryConfig<DBEntity extends BaseEntity = any, DomainEntity = any> {
+  entityClass: EntityName<DBEntity>
+  conditionRegistry: ConditionAdapterRegistry
+  hooks?: IRepositoryHooks<DomainEntity>
+}
 
 export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimaryKey extends keyof DomainEntity = never> implements IRepository<
   DomainEntity,
@@ -38,11 +44,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   public constructor(
     protected readonly scope: IConnectionScope<EntityManager>,
-    protected readonly entityClass: EntityName<DBEntity>,
     protected readonly mapper: IMapper<DomainEntity, DBEntity>,
-    protected readonly hooks?: IRepositoryHooks<DomainEntity>
+    protected readonly config: IMikroRepositoryConfig<DBEntity, DomainEntity>
   ) {
-    const meta = this.em.getMetadata().get(this.entityClass)
+    const meta = this.em.getMetadata().get(this.config.entityClass)
     this.primary = meta.primaryKeys
   }
 
@@ -51,7 +56,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   private get repository(): EntityRepository<DBEntity> {
-    return this.em.getRepository(this.entityClass)
+    return this.em.getRepository(this.config.entityClass)
   }
 
   public async count(condition?: Condition): Promise<number> {
@@ -146,16 +151,16 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
-    const processed = this.hooks?.beforeInsert?.(data as DomainEntity) ?? data
+    const processed = this.config.hooks?.beforeInsert?.(data as DomainEntity) ?? data
     const entity = this.mapper.toEntity(processed as DomainEntity)
-    const nextEntity = this.em.create(this.entityClass, entity as never)
+    const nextEntity = this.em.create(this.config.entityClass, entity as never)
     await this.em.persist(nextEntity).flush()
 
     return this.mapper.toDomain(nextEntity)
   }
 
   public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
-    data = this.hooks?.beforeUpdate?.(data) ?? data
+    data = this.config.hooks?.beforeUpdate?.(data) ?? data
     const updateEntity = this.mapper.toPersistence(data) as UpdateDto<DBEntity>
     if (!isPlainObject(updateEntity)) {
       throw new Error(
@@ -185,7 +190,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
-    data = this.hooks?.beforeUpdate?.(data) ?? data
+    data = this.config.hooks?.beforeUpdate?.(data) ?? data
     const updateEntity = this.mapper.toPersistence(data) as EntityData<DBEntity>
     if (!isPlainObject(updateEntity)) {
       throw new Error(
@@ -204,8 +209,8 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       return [] as R
     }
 
-    const processed = this.hooks?.beforeInsert
-      ? items.map((i) => this.hooks!.beforeInsert!(i as DomainEntity) as Omit<DomainEntity, TPrimaryKey>)
+    const processed = this.config.hooks?.beforeInsert
+      ? items.map((i) => this.config.hooks!.beforeInsert!(i as DomainEntity) as Omit<DomainEntity, TPrimaryKey>)
       : items
     const entities = processed.map((i) => this.mapper.toEntity(i as DomainEntity))
     // MikroORM's insertMany() requires MikroEntity[] or RequiredEntityData[], but our mapper returns Partial<EntityDTO>[]
@@ -252,7 +257,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     }
 
     if (condition) {
-      const serializer = ConditionAdapterRegistry.getInstance().getSerializer<KnexConditionApplier>(AdapterType.KNEX)
+      const serializer = this.config.conditionRegistry.getSerializer<KnexConditionApplier>(AdapterType.KNEX)
       const fieldMapping = this.mapper.getFieldMapping()
       const applier = serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
       applier(queryBuilder)
@@ -282,7 +287,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     }
 
     // Apply hook to peeked item so field mapping includes hook-added fields
-    const sample = this.hooks?.beforeInsert?.(first) ?? first
+    const sample = this.config.hooks?.beforeInsert?.(first) ?? first
 
     // Build field mapping from entity properties to DB columns
     const mapping = this.#buildFieldMapping(sample)
@@ -304,7 +309,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   protected getTable(): string {
-    const meta = this.em.getMetadata().get(this.entityClass)
+    const meta = this.em.getMetadata().get(this.config.entityClass)
     return meta.tableName
   }
 
@@ -342,14 +347,14 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       return {} as FilterQuery<DBEntity>
     }
 
-    const serializer = ConditionAdapterRegistry.getInstance().getSerializer<FilterQuery<DBEntity>>(AdapterType.MIKROORM)
+    const serializer = this.config.conditionRegistry.getSerializer<FilterQuery<DBEntity>>(AdapterType.MIKROORM)
     const fieldMapping = this.mapper.getFieldMapping()
     return serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
   }
 
   #buildFieldMapping(item: DomainEntity): Record<string, string> {
     const dbEntity = this.mapper.toEntity(item)
-    const meta = this.em.getMetadata().get(this.entityClass)
+    const meta = this.em.getMetadata().get(this.config.entityClass)
     const mapping: Record<string, string> = {}
 
     for (const key of Object.keys(dbEntity as object)) {
@@ -368,7 +373,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   }
 
   #buildDbToEntityMapping(): Record<string, string> {
-    const meta = this.em.getMetadata().get(this.entityClass)
+    const meta = this.em.getMetadata().get(this.config.entityClass)
 
     // Build reverse mapping: dbColumn -> entityProperty
     const dbToEntityMapping: Record<string, string> = {}
@@ -407,7 +412,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   #createEntityStream(stream: PassThrough & AsyncIterable<DomainEntity>): PassThrough & AsyncIterable<DBEntity> {
     const mapper = this.mapper
-    const hooks = this.hooks
+    const hooks = this.config.hooks
 
     const transform = new Transform({
       objectMode: true,

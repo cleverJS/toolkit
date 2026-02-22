@@ -1,9 +1,10 @@
-import { BaseEntity, Entity, EntityManager, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
-import { PostgreSqlDriver } from '@mikro-orm/postgresql'
+import { AdapterType, ConditionAdapterRegistry, KnexConditionAdapter, MikroOrmConditionAdapter } from '@cleverJS/condition-builder'
+import { BaseEntity, Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
+import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IdentityMapper, MikroConnectionScope, MikroRepository } from '../../../src'
+import { MikroConnectionScope, MikroIdentityMapper, MikroRepository } from '../../../src'
 
 // Test Entity
 @Entity({ tableName: 'test_products' })
@@ -76,15 +77,21 @@ describe('PostgreSQL Bulk Insert', () => {
       debug: false,
     })
 
-    em = orm.em.fork()
+    em = orm.em.fork() as unknown as EntityManager
     await orm.schema.dropSchema()
     // Create the test table
     await orm.schema.createSchema()
 
     // Initialize repository
     const scope = new MikroConnectionScope(em)
-    repository = new MikroRepository<ProductEntity, Product>(scope, ProductEntity, new IdentityMapper<Product>())
+    const conditionAdapterRegistry = new ConditionAdapterRegistry()
+    conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
+    conditionAdapterRegistry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
 
+    repository = new MikroRepository<ProductEntity, Product>(scope, new MikroIdentityMapper<Product, ProductEntity>(ProductEntity), {
+      entityClass: ProductEntity,
+      conditionRegistry: conditionAdapterRegistry,
+    })
   })
 
   afterAll(async () => {

@@ -110,7 +110,8 @@ describe('Transaction through business layer', () => {
   let placeOrder: PlaceOrderUseCase
 
   beforeAll(async () => {
-    ConditionAdapterRegistry.getInstance().register(AdapterType.KNEX, new KnexConditionAdapter())
+    const conditionAdapterRegistry = new ConditionAdapterRegistry()
+    conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
 
     db = knex({
       client: 'pg',
@@ -145,13 +146,13 @@ describe('Transaction through business layer', () => {
     orderRepo = new KnexRepository<OrderDBEntity, Order, 'id'>(
       scope,
       new FieldMapper<Order, OrderDBEntity>({ userEmail: 'user_email', productName: 'product_name', createdAt: 'created_at' }),
-      { table: 'test_orders', primary: ['id'] }
+      { table: 'test_orders', primary: ['id'], conditionRegistry: conditionAdapterRegistry }
     )
 
     inventoryRepo = new KnexRepository<InventoryDBEntity, Inventory>(
       scope,
       new FieldMapper<Inventory, InventoryDBEntity>({ productName: 'product_name' }),
-      { table: 'test_inventory', primary: ['product_name'] }
+      { table: 'test_inventory', primary: ['product_name'], conditionRegistry: conditionAdapterRegistry }
     )
 
     orderService = new OrderService(orderRepo)

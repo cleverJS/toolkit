@@ -3,16 +3,17 @@ import knex, { Knex } from 'knex'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { FieldMapper, KnexConnectionScope, KnexRepository, IRepositoryHooks, Paginator } from '../../src'
+import { FieldMapper, IRepositoryHooks, KnexConnectionScope, KnexRepository, Paginator } from '../../src'
 
 describe('KnexRepository', () => {
   let db: Knex
   let scope: KnexConnectionScope
   let repository: KnexRepository<UserDBEntity, User>
   let repositoryJob: KnexRepository<JobDBEntity, Job, 'id'>
+  let conditionAdapterRegistry: ConditionAdapterRegistry
 
   beforeAll(async () => {
-    const conditionAdapterRegistry = ConditionAdapterRegistry.getInstance()
+    conditionAdapterRegistry = new ConditionAdapterRegistry()
     conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
 
     db = knex({
@@ -49,13 +50,14 @@ describe('KnexRepository', () => {
     repository = new KnexRepository<UserDBEntity, User>(
       scope,
       new FieldMapper<User, UserDBEntity>({ isActive: 'is_active', createdAt: 'created_at' }),
-      { table: 'test_knex_users', primary: ['email'] }
+      { table: 'test_knex_users', primary: ['email'], conditionRegistry: conditionAdapterRegistry }
     )
 
-    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(scope, new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }), {
-      table: 'test_knex_jobs',
-      primary: ['id'],
-    })
+    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(
+      scope,
+      new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }),
+      { table: 'test_knex_jobs', primary: ['id'], conditionRegistry: conditionAdapterRegistry }
+    )
   })
 
   afterAll(async () => {
@@ -833,8 +835,7 @@ describe('KnexRepository', () => {
       hookedRepository = new KnexRepository<JobDBEntity, Job, 'id'>(
         scope,
         new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }),
-        { table: 'test_knex_jobs', primary: ['id'] },
-        hooks
+        { table: 'test_knex_jobs', primary: ['id'], conditionRegistry: conditionAdapterRegistry, hooks }
       )
     })
 
@@ -883,10 +884,7 @@ describe('KnexRepository', () => {
     })
 
     it('should apply beforeInsert on bulkInsert', async () => {
-      const stream = jsonToStream<Job>([
-        { name: 'Bulk 1' } as Job,
-        { name: 'Bulk 2', createdAt: new Date('2020-01-01T00:00:00Z') },
-      ])
+      const stream = jsonToStream<Job>([{ name: 'Bulk 1' } as Job, { name: 'Bulk 2', createdAt: new Date('2020-01-01T00:00:00Z') }])
 
       const count = await hookedRepository.bulkInsert(stream)
       expect(count).toBe(2)

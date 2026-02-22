@@ -6,8 +6,8 @@ import {
   KnexConditionAdapter,
   MikroOrmConditionAdapter,
 } from '@cleverJS/condition-builder'
-import { BaseEntity, Entity, EntityManager, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
-import { PostgreSqlDriver } from '@mikro-orm/postgresql'
+import { BaseEntity, Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
+import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -19,9 +19,10 @@ describe('MikroRepository', () => {
   let scope: MikroConnectionScope
   let repository: MikroRepository<UserEntity, User>
   let repositoryJob: MikroRepository<JobEntity, Job, 'id'>
+  let conditionAdapterRegistry: ConditionAdapterRegistry
 
   beforeAll(async () => {
-    const conditionAdapterRegistry = ConditionAdapterRegistry.getInstance()
+    conditionAdapterRegistry = new ConditionAdapterRegistry()
     conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
     conditionAdapterRegistry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
 
@@ -37,7 +38,7 @@ describe('MikroRepository', () => {
       debug: false,
     })
 
-    em = orm.em.fork()
+    em = orm.em.fork() as unknown as EntityManager
 
     // Create the test table
     await orm.schema.dropSchema()
@@ -45,8 +46,14 @@ describe('MikroRepository', () => {
 
     // Initialize scope and repositories
     scope = new MikroConnectionScope(em)
-    repository = new MikroRepository<UserEntity, User>(scope, UserEntity, new MikroIdentityMapper<User, UserEntity>(UserEntity))
-    repositoryJob = new MikroRepository<JobEntity, Job, 'id'>(scope, JobEntity, new MikroIdentityMapper<Job, JobEntity>(JobEntity))
+    repository = new MikroRepository<UserEntity, User>(scope, new MikroIdentityMapper<User, UserEntity>(UserEntity), {
+      entityClass: UserEntity,
+      conditionRegistry: conditionAdapterRegistry,
+    })
+    repositoryJob = new MikroRepository<JobEntity, Job, 'id'>(scope, new MikroIdentityMapper<Job, JobEntity>(JobEntity), {
+      entityClass: JobEntity,
+      conditionRegistry: conditionAdapterRegistry,
+    })
   })
 
   afterAll(async () => {
@@ -792,7 +799,11 @@ describe('MikroRepository', () => {
         },
       }
 
-      hookedRepository = new MikroRepository<JobEntity, Job, 'id'>(scope, JobEntity, new MikroIdentityMapper<Job, JobEntity>(JobEntity), hooks)
+      hookedRepository = new MikroRepository<JobEntity, Job, 'id'>(scope, new MikroIdentityMapper<Job, JobEntity>(JobEntity), {
+        entityClass: JobEntity,
+        conditionRegistry: conditionAdapterRegistry,
+        hooks,
+      })
     })
 
     beforeEach(async () => {
@@ -822,6 +833,8 @@ describe('MikroRepository', () => {
     it('should apply beforeUpdate on updateOne', async () => {
       const job = await hookedRepository.insert({ name: 'Original', createdAt: new Date() })
 
+      if (!job?.id) throw new Error('Job not found')
+
       const condition = ConditionBuilder.create({ id: job.id }).build()
       const updated = await hookedRepository.updateOne(condition, { name: 'Changed' })
 
@@ -830,6 +843,8 @@ describe('MikroRepository', () => {
 
     it('should apply beforeUpdate on update', async () => {
       const job = await hookedRepository.insert({ name: 'Original', createdAt: new Date() })
+
+      if (!job?.id) throw new Error('Job not found')
 
       const condition = ConditionBuilder.create({ id: job.id }).build()
       const count = await hookedRepository.update(condition, { name: 'Changed' })

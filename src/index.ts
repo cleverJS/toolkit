@@ -3,7 +3,7 @@ export { listWithPagination } from './utils/list-with-pagination'
 
 // Infrastructure Layer
 export { IRepository, IMapper, IRepositoryHooks } from './infrastructure/IRepository'
-export { MikroRepository } from './infrastructure/Mikro.repository'
+export { MikroRepository, IMikroRepositoryConfig } from './infrastructure/Mikro.repository'
 export { KnexRepository, IKnexRepositoryConfig } from './infrastructure/Knex.repository'
 export { IFindAll, IFindAllWithSelect, ISort } from './infrastructure/types'
 export { FieldMapper, FieldMapping, IdentityMapper, MikroIdentityMapper, MikroFieldMapper } from './infrastructure/mapper'

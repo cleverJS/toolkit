@@ -248,14 +248,17 @@ You can always implement `IMapper` directly for complex transformations (compute
 
 ```typescript
 import { KnexConnectionScope, KnexRepository, FieldMapper } from '@cleverjs/toolkit'
+import { ConditionAdapterRegistry } from '@cleverJS/condition-builder'
 import knex from 'knex'
 
 const db = knex({ client: 'pg', connection: '...' })
 const scope = new KnexConnectionScope(db)
 const mapper = new FieldMapper<User, UserDBEntity>({ isActive: 'is_active', createdAt: 'created_at' })
+const conditionRegistry = new ConditionAdapterRegistry()
 const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
   table: 'users',
   primary: ['email'],
+  conditionRegistry,
 })
 ```
 
@@ -263,11 +266,16 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
 
 ```typescript
 import { MikroConnectionScope, MikroRepository, MikroIdentityMapper } from '@cleverjs/toolkit'
+import { ConditionAdapterRegistry } from '@cleverJS/condition-builder'
 
 const em = orm.em.fork()
 const scope = new MikroConnectionScope(em)
 const mapper = new MikroIdentityMapper<User, UserEntity>(UserEntity)
-const userRepo = new MikroRepository<UserEntity, User>(scope, UserEntity, mapper)
+const conditionRegistry = new ConditionAdapterRegistry()
+const userRepo = new MikroRepository<UserEntity, User>(scope, mapper, {
+  entityClass: UserEntity,
+  conditionRegistry,
+})
 ```
 
 ### Repository Hooks
@@ -287,8 +295,17 @@ const hooks: IRepositoryHooks<User> = {
 }
 
 // Works with both repository implementations
-const mikroRepo = new MikroRepository<UserEntity, User>(scope, UserEntity, mapper, hooks)
-const knexRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, { table: 'users', primary: ['email'] }, hooks)
+const mikroRepo = new MikroRepository<UserEntity, User>(scope, mapper, {
+  entityClass: UserEntity,
+  conditionRegistry,
+  hooks,
+})
+const knexRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
+  table: 'users',
+  primary: ['email'],
+  conditionRegistry,
+  hooks,
+})
 ```
 
 Hooks are plain functions — testable in isolation without any ORM infrastructure:
@@ -378,6 +395,7 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
   table: 'users',
   primary: ['email'],
   bulkInsertStrategy: new PostgresBulkInsertStrategy(),
+  conditionRegistry,
 })
 ```
 

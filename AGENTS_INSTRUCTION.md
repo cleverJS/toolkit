@@ -119,12 +119,17 @@ class MikroRepository<
 > implements IRepository<DomainEntity, TPrimaryKey> {
   constructor(
     scope: IConnectionScope<EntityManager>,
-    entityClass: EntityName<DBEntity>,
     mapper: IMapper<DomainEntity, DBEntity>,
-    hooks?: IRepositoryHooks<DomainEntity>
+    config: IMikroRepositoryConfig<DBEntity, DomainEntity>,
   )
   protected getKnex(): Knex        // access underlying Knex
   protected getTable(): string      // table name from entity metadata
+}
+
+interface IMikroRepositoryConfig<DBEntity extends BaseEntity = any, DomainEntity = any> {
+  entityClass: EntityName<DBEntity>
+  conditionRegistry: ConditionAdapterRegistry
+  hooks?: IRepositoryHooks<DomainEntity>
 }
 ```
 
@@ -139,15 +144,16 @@ class KnexRepository<
   constructor(
     scope: IConnectionScope<Knex>,
     mapper: IMapper<DomainEntity, DBEntity>,
-    config: IKnexRepositoryConfig,
-    hooks?: IRepositoryHooks<DomainEntity>
+    config: IKnexRepositoryConfig<DomainEntity>,
   )
 }
 
-interface IKnexRepositoryConfig {
+interface IKnexRepositoryConfig<DomainEntity = any> {
   table: string
   primary?: string[]
   bulkInsertStrategy?: IBulkInsertStrategy<Knex>
+  conditionRegistry: ConditionAdapterRegistry
+  hooks?: IRepositoryHooks<DomainEntity>
 }
 ```
 
@@ -323,7 +329,7 @@ type PropertySchema<T> = { /* data-only keys of T (strips methods) */ }
 ## 8. End-to-end usage example
 
 ```ts
-import { Condition } from '@cleverJS/condition-builder'
+import { Condition, ConditionAdapterRegistry } from '@cleverJS/condition-builder'
 import {
   KnexConnectionScope,
   KnexRepository,
@@ -353,9 +359,11 @@ const mapper = new FieldMapper<User, UserRow>({ name: 'full_name' })
 // 4. Create scope and repository
 const knex = Knex({ client: 'pg', connection: '...' })
 const scope = new KnexConnectionScope(knex)
+const conditionRegistry = new ConditionAdapterRegistry()
 const repo = new KnexRepository<UserRow, User, 'id'>(scope, mapper, {
   table: 'users',
   primary: ['id'],
+  conditionRegistry,
 })
 
 // 5. Query
