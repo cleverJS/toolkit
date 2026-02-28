@@ -5,7 +5,7 @@ import {
   ConditionBuilder,
   KnexConditionAdapter,
   MikroOrmConditionAdapter,
-} from '@cleverJS/condition-builder'
+} from '@cleverjs/condition-builder'
 import { BaseEntity, Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
 import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'

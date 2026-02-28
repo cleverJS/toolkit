@@ -248,7 +248,7 @@ You can always implement `IMapper` directly for complex transformations (compute
 
 ```typescript
 import { KnexConnectionScope, KnexRepository, FieldMapper } from '@cleverjs/toolkit'
-import { ConditionAdapterRegistry } from '@cleverJS/condition-builder'
+import { ConditionAdapterRegistry } from '@cleverjs/condition-builder'
 import knex from 'knex'
 
 const db = knex({ client: 'pg', connection: '...' })
@@ -266,7 +266,7 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
 
 ```typescript
 import { MikroConnectionScope, MikroRepository, MikroIdentityMapper } from '@cleverjs/toolkit'
-import { ConditionAdapterRegistry } from '@cleverJS/condition-builder'
+import { ConditionAdapterRegistry } from '@cleverjs/condition-builder'
 
 const em = orm.em.fork()
 const scope = new MikroConnectionScope(em)

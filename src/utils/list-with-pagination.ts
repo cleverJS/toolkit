@@ -1,4 +1,4 @@
-import { Condition } from '@cleverJS/condition-builder'
+import { Condition } from '@cleverjs/condition-builder'
 
 import { IRepository } from '../infrastructure/IRepository'
 import { ISort } from '../infrastructure/types'

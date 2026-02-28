@@ -88,7 +88,7 @@ new MikroFieldMapper<User, UserEntity>(UserEntity, { isActive: 'is_active' })
 
 ```ts
 interface IFindAll {
-  condition?: Condition        // from @cleverJS/condition-builder
+  condition?: Condition        // from @cleverjs/condition-builder
   paginator?: Paginator
   sort?: ISort
 }
@@ -329,7 +329,7 @@ type PropertySchema<T> = { /* data-only keys of T (strips methods) */ }
 ## 8. End-to-end usage example
 
 ```ts
-import { Condition, ConditionAdapterRegistry } from '@cleverJS/condition-builder'
+import { Condition, ConditionAdapterRegistry } from '@cleverjs/condition-builder'
 import {
   KnexConnectionScope,
   KnexRepository,
@@ -387,7 +387,7 @@ await scope.transaction(async () => {
 
 | Dependency | Required for |
 |---|---|
-| `@cleverJS/condition-builder` | Condition-based queries in repositories |
+| `@cleverjs/condition-builder` | Condition-based queries in repositories |
 | `@mikro-orm/core`, `@mikro-orm/knex` | `MikroRepository`, `MikroConnectionScope` |
 | `knex` | `KnexRepository`, `KnexConnectionScope`, bulk insert strategies |
 | `pg` | PostgreSQL connection |

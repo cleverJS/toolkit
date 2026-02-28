@@ -1,4 +1,4 @@
-import { Condition } from '@cleverJS/condition-builder'
+import { Condition } from '@cleverjs/condition-builder'
 import { PassThrough } from 'stream'
 
 import { PropertySchema } from '../utils/types/types'

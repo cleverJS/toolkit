@@ -1,4 +1,4 @@
-import { ConditionBuilder } from '@cleverJS/condition-builder'
+import { ConditionBuilder } from '@cleverjs/condition-builder'
 import { describe, expect, it, vi } from 'vitest'
 
 import { IRepository, ISort, listWithPagination, Paginator } from '../../src'

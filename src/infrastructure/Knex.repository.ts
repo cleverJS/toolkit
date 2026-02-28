@@ -1,4 +1,4 @@
-import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverJS/condition-builder'
+import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverjs/condition-builder'
 import { Knex } from 'knex'
 import { PassThrough, Transform } from 'stream'
 

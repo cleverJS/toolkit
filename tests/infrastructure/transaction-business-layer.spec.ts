@@ -1,4 +1,4 @@
-import { AdapterType, Condition, ConditionAdapterRegistry, ConditionBuilder, KnexConditionAdapter } from '@cleverJS/condition-builder'
+import { AdapterType, Condition, ConditionAdapterRegistry, ConditionBuilder, KnexConditionAdapter } from '@cleverjs/condition-builder'
 import knex, { Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
