@@ -22,11 +22,10 @@ export interface IKnexRepositoryConfig<DomainEntity = any> {
   hooks?: IRepositoryHooks<DomainEntity>
 }
 
-export class KnexRepository<
-  DBEntity extends Record<string, unknown>,
+export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof DomainEntity = never> implements IRepository<
   DomainEntity,
-  TPrimaryKey extends keyof DomainEntity = never,
-> implements IRepository<DomainEntity, TPrimaryKey> {
+  TPrimaryKey
+> {
   public readonly primary?: string[]
 
   public constructor(

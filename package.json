@@ -38,7 +38,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/cleverJS/toolkit.git"
+    "url": "https://github.com/cleverjs/toolkit.git"
   },
   "keywords": [
     "typescript",
@@ -55,7 +55,7 @@
   "license": "MIT",
   "type": "commonjs",
   "peerDependencies": {
-    "@cleverJS/condition-builder": "^1.0.6",
+    "@cleverjs/condition-builder": "^1.0.6",
     "@mikro-orm/core": "^6.6.7",
     "@mikro-orm/knex": "^6.6.7",
     "knex": "^3.1.0",
@@ -63,7 +63,7 @@
     "pg-copy-streams": "^7.0.0"
   },
   "peerDependenciesMeta": {
-    "@cleverJS/condition-builder": {
+    "@cleverjs/condition-builder": {
       "optional": true
     },
     "@mikro-orm/core": {
@@ -83,7 +83,7 @@
     }
   },
   "devDependencies": {
-    "@cleverJS/condition-builder": "^1.0.6",
+    "@cleverjs/condition-builder": "^1.0.6",
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
     "@mikro-orm/core": "^6.6.7",
