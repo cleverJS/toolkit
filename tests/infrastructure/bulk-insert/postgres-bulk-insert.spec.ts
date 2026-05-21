@@ -1,10 +1,25 @@
-import { AdapterType, ConditionAdapterRegistry, KnexConditionAdapter, MikroOrmConditionAdapter } from '@cleverjs/condition-builder'
-import { BaseEntity, Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
+import {
+  AdapterType,
+  ConditionAdapterRegistry,
+  KnexConditionAdapter,
+  KyselyConditionAdapter,
+  MikroOrmConditionAdapter,
+} from '@cleverjs/condition-builder'
+import { BaseEntity, MikroORM } from '@mikro-orm/core'
+import { Entity, PrimaryKey, Property, ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
 import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
+import { PostgresDialect } from 'kysely'
+import { Pool } from 'pg'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { MikroConnectionScope, MikroIdentityMapper, MikroRepository } from '../../../src'
+import {
+  MikroConnectionScope,
+  MikroIdentityMapper,
+  MikroRepository,
+  PostgresCopyBulkInsertStrategy,
+  resolveMikroBulkInsertStrategy,
+} from '../../../src'
 
 // Test Entity
 @Entity({ tableName: 'test_products' })
@@ -62,41 +77,63 @@ function jsonToStream<T>(arr: T[]): PassThrough & AsyncIterable<T> {
 describe('PostgreSQL Bulk Insert', () => {
   let orm: MikroORM
   let em: EntityManager
+  let pgPool: Pool
+  let scope: MikroConnectionScope
   let repository: MikroRepository<ProductEntity, Product>
 
   beforeAll(async () => {
-    // Initialize MikroORM with PostgreSQL
-    orm = await MikroORM.init({
-      entities: [ProductEntity],
-      driver: PostgreSqlDriver,
-      dbName: process.env.POSTGRES_DB || 'test_db',
+    // Single pg.Pool shared between MikroORM (via PostgresDialect) and
+    // PostgresCopyBulkInsertStrategy — so COPY connections are drawn from the same
+    // pool as ORM queries, avoiding double-pooling and config drift.
+    pgPool = new Pool({
       host: process.env.POSTGRES_HOST || 'localhost',
       port: parseInt(process.env.POSTGRES_PORT || '5433'),
       user: process.env.POSTGRES_USER || 'test_db',
       password: process.env.POSTGRES_PASSWORD || 'test_db',
+      database: process.env.POSTGRES_DB || 'test_db',
+    })
+
+    orm = await MikroORM.init({
+      entities: [ProductEntity],
+      driver: PostgreSqlDriver,
+      metadataProvider: ReflectMetadataProvider,
+      driverOptions: new PostgresDialect({ pool: pgPool }),
+      // MikroORM still wants a dbName even when a dialect is provided — used for schema ops.
+      dbName: process.env.POSTGRES_DB || 'test_db',
       debug: false,
     })
 
     em = orm.em.fork() as unknown as EntityManager
-    await orm.schema.dropSchema()
+    await orm.schema.drop()
     // Create the test table
-    await orm.schema.createSchema()
+    await orm.schema.create()
 
-    // Initialize repository
-    const scope = new MikroConnectionScope(em)
+    // Initialize repository with the COPY strategy resolved from the Kysely dialect.
+    // The resolver auto-picks PostgresCopyBulkInsertStrategy because the dialect is `postgres`
+    // and `pgPool` is provided. Falls back to KyselyChunkedBulkInsertStrategy otherwise.
+    scope = new MikroConnectionScope(em)
     const conditionAdapterRegistry = new ConditionAdapterRegistry()
     conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
+    conditionAdapterRegistry.register(AdapterType.KYSELY, new KyselyConditionAdapter())
     conditionAdapterRegistry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
+
+    const bulkInsertStrategy = resolveMikroBulkInsertStrategy({
+      kysely: em.getKysely(),
+      pgPool,
+    })
 
     repository = new MikroRepository<ProductEntity, Product>(scope, new MikroIdentityMapper<Product, ProductEntity>(ProductEntity), {
       entityClass: ProductEntity,
       conditionRegistry: conditionAdapterRegistry,
+      bulkInsertStrategy,
     })
   })
 
   afterAll(async () => {
-    // Clean up: drop schema and close connection
-    await orm.schema.dropSchema()
+    // Clean up: drop schema and close connection. Kysely takes ownership of the
+    // PostgresDialect's pool, so `orm.close(true)` ends the pool — calling
+    // `pgPool.end()` again would throw "Called end on pool more than once".
+    await orm.schema.drop()
     await orm.close(true)
   })
 
@@ -312,6 +349,40 @@ describe('PostgreSQL Bulk Insert', () => {
       const allProducts = await repository.findAll({})
       expect(allProducts).toHaveLength(1)
       expect(allProducts[0].createdAt.toISOString()).toBe(testDate.toISOString())
+    })
+
+    it('should use the resolved PostgresCopyBulkInsertStrategy', () => {
+      // Sanity check that the resolver wired up the COPY strategy — not the chunked
+      // fallback — when given a pg.Pool against a postgres dialect.
+      const resolved = resolveMikroBulkInsertStrategy({ kysely: em.getKysely(), pgPool })
+      expect(resolved).toBeInstanceOf(PostgresCopyBulkInsertStrategy)
+    })
+
+    it('should fall back to chunked INSERT inside a MikroORM transaction', async () => {
+      // COPY can't participate in a Kysely-managed transaction, so the strategy
+      // transparently switches to KyselyChunkedBulkInsertStrategy. The chunked path
+      // IS in the transaction, so commit/rollback semantics still apply.
+      await scope.transaction(async () => {
+        const stream = jsonToStream<Product>([{ name: 'Tx product', price: 1, createdAt: new Date(), isActive: true }])
+        const count = await repository.bulkInsert(stream)
+        expect(count).toBe(1)
+      })
+
+      const total = await repository.count()
+      expect(total).toBe(1)
+    })
+
+    it('should rollback bulkInsert inside a failing transaction (fallback path)', async () => {
+      await expect(
+        scope.transaction(async () => {
+          const stream = jsonToStream<Product>([{ name: 'Will be rolled back', price: 1, createdAt: new Date(), isActive: true }])
+          await repository.bulkInsert(stream)
+          throw new Error('force rollback')
+        })
+      ).rejects.toThrow('force rollback')
+
+      const total = await repository.count()
+      expect(total).toBe(0)
     })
   })
 })

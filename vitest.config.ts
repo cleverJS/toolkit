@@ -8,6 +8,11 @@ export default defineConfig({
     globals: true,
     root: './',
     setupFiles: ['dotenv/config'],
+    // Integration tests share a single Postgres instance. MikroORM 7's `schema.create()`
+    // introspects `information_schema` before issuing DDL, and the FallbackBulkInsertStrategy
+    // suite (pure knex) concurrently creates/drops `fallback_test`, which races with the
+    // introspection. Running test files sequentially avoids the TOCTOU on shared state.
+    fileParallelism: false,
   },
   plugins: [
     // This is required to build the test files with SWC

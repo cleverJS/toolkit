@@ -2,6 +2,7 @@ import { Knex } from 'knex'
 
 import { IBulkInsertStrategy } from './IBulkInsertStrategy'
 import { FallbackBulkInsertStrategy } from './mikroorm/FallbackBulkInsertStrategy'
+import { MssqlBulkInsertStrategy } from './mikroorm/MssqlBulkInsertStrategy'
 import { PostgresBulkInsertStrategy } from './mikroorm/PostgresBulkInsertStrategy'
 
 export function resolveBulkInsertStrategy(knex: Knex): IBulkInsertStrategy<Knex> {
@@ -9,6 +10,10 @@ export function resolveBulkInsertStrategy(knex: Knex): IBulkInsertStrategy<Knex>
 
   if (dialect === 'pg' || dialect === 'postgresql') {
     return new PostgresBulkInsertStrategy()
+  }
+
+  if (dialect === 'mssql' || dialect === 'tedious') {
+    return new MssqlBulkInsertStrategy()
   }
 
   return new FallbackBulkInsertStrategy()

@@ -4,9 +4,11 @@ import {
   ConditionAdapterRegistry,
   ConditionBuilder,
   KnexConditionAdapter,
+  KyselyConditionAdapter,
   MikroOrmConditionAdapter,
 } from '@cleverjs/condition-builder'
-import { BaseEntity, Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/core'
+import { BaseEntity, MikroORM } from '@mikro-orm/core'
+import { Entity, PrimaryKey, Property, ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
 import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -24,12 +26,14 @@ describe('MikroRepository', () => {
   beforeAll(async () => {
     conditionAdapterRegistry = new ConditionAdapterRegistry()
     conditionAdapterRegistry.register(AdapterType.KNEX, new KnexConditionAdapter())
+    conditionAdapterRegistry.register(AdapterType.KYSELY, new KyselyConditionAdapter())
     conditionAdapterRegistry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
 
     // Initialize MikroORM with PostgreSQL
     orm = await MikroORM.init({
       entities: [UserEntity, JobEntity],
       driver: PostgreSqlDriver,
+      metadataProvider: ReflectMetadataProvider,
       dbName: process.env.POSTGRES_DB || 'test_db',
       host: process.env.POSTGRES_HOST || 'localhost',
       port: parseInt(process.env.POSTGRES_PORT || '5433'),
@@ -41,8 +45,8 @@ describe('MikroRepository', () => {
     em = orm.em.fork() as unknown as EntityManager
 
     // Create the test table
-    await orm.schema.dropSchema()
-    await orm.schema.createSchema()
+    await orm.schema.drop()
+    await orm.schema.create()
 
     // Initialize scope and repositories
     scope = new MikroConnectionScope(em)
@@ -58,7 +62,7 @@ describe('MikroRepository', () => {
 
   afterAll(async () => {
     // Clean up: drop schema and close connection
-    await orm.schema.dropSchema()
+    await orm.schema.drop()
     await orm.close(true)
   })
 

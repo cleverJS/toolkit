@@ -1,4 +1,4 @@
-import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverjs/condition-builder'
+import { AdapterType, Condition, ConditionAdapterRegistry, KyselyConditionApplier } from '@cleverjs/condition-builder'
 import {
   BaseEntity,
   EntityDTO,
@@ -12,16 +12,15 @@ import {
 } from '@mikro-orm/core'
 import type { FindAllOptions } from '@mikro-orm/core/drivers/IDatabaseDriver'
 import type { EntityData } from '@mikro-orm/core/typings'
-import { Knex } from '@mikro-orm/knex'
+import { Kysely, SelectQueryBuilder } from 'kysely'
 import { PassThrough, Transform } from 'stream'
 
 import { isPlainObject, removeUndefined } from '../utils/helpers/object'
 import { peekAndReplayStream } from '../utils/helpers/streams'
-import { KnexHelper } from '../utils/KnexHelper'
 import { Paginator } from '../utils/Paginator'
 import { PropertySchema } from '../utils/types/types'
 
-import { resolveBulkInsertStrategy } from './bulk-insert'
+import { IMikroBulkInsertStrategy, KyselyChunkedBulkInsertStrategy } from './bulk-insert/mikro'
 import { IMapper, IRepository, IRepositoryHooks } from './IRepository'
 import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
@@ -29,11 +28,20 @@ import { IFindAll, IFindAllWithSelect } from './types'
 const SAFE_IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_.]*$/
 
 type PrimaryKey = string | number
+type AnyKysely = Kysely<any>
 
 export interface IMikroRepositoryConfig<DBEntity extends BaseEntity = any, DomainEntity = any> {
   entityClass: EntityName<DBEntity>
   conditionRegistry: ConditionAdapterRegistry
   hooks?: IRepositoryHooks<DomainEntity>
+  /**
+   * Bulk insert backend. Defaults to `KyselyChunkedBulkInsertStrategy` (multi-row INSERT via
+   * Kysely, transactional). For high-throughput loads of millions of rows, pass
+   * `PostgresCopyBulkInsertStrategy` configured with the same `pg.Pool` that MikroORM uses
+   * (via `driverOptions: new PostgresDialect({ pool })`) — it pipes rows through
+   * `COPY ... FROM STDIN` and falls back to chunked INSERT inside MikroORM transactions.
+   */
+  bulkInsertStrategy?: IMikroBulkInsertStrategy
 }
 
 export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimaryKey extends keyof DomainEntity = never> implements IRepository<
@@ -77,30 +85,11 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     }
 
     const filter = this.#serializeCondition(condition)
-    const options: FindAllOptions<DBEntity> = {}
+    const options = this.#buildFindOptions(filter, sort, paginator)
 
-    if (sort) {
-      const orderBy: Record<string, 'asc' | 'desc'> = {}
-      for (const [field, dir] of Object.entries(sort)) {
-        const mapped = this.#mapField(field)
-        MikroRepository.#validateIdentifier(mapped, 'sort')
-        orderBy[mapped] = dir
-      }
-      options.orderBy = orderBy as OrderDefinition<DBEntity>
-    }
+    const items = await this.repository.findAll(options as any)
 
-    if (paginator) {
-      options.limit = paginator.getLimit()
-      options.offset = paginator.getOffset()
-    }
-
-    if (Object.keys(filter).length > 0) {
-      options.where = filter
-    }
-
-    const items = await this.repository.findAll(options)
-
-    return items.map((i) => this.mapper.toDomain(i))
+    return items.map((i) => this.mapper.toDomain(i as DBEntity))
   }
 
   public async findPartial<R = Partial<DomainEntity>>(payload: IFindAllWithSelect): Promise<R[]> {
@@ -112,30 +101,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
     const filter = this.#serializeCondition(condition)
     const mappedSelect = select ? this.#mapSelect(select) : select
-    const options: FindAllOptions<DBEntity> = {
-      fields: mappedSelect as unknown as FindAllOptions<DBEntity>['fields'],
-    }
+    const options = this.#buildFindOptions(filter, sort, paginator)
+    options.fields = mappedSelect as unknown as FindAllOptions<DBEntity>['fields']
 
-    if (sort) {
-      const orderBy: Record<string, 'asc' | 'desc'> = {}
-      for (const [field, dir] of Object.entries(sort)) {
-        const mapped = this.#mapField(field)
-        MikroRepository.#validateIdentifier(mapped, 'sort')
-        orderBy[mapped] = dir
-      }
-      options.orderBy = orderBy as OrderDefinition<DBEntity>
-    }
-
-    if (paginator) {
-      options.limit = paginator.getLimit()
-      options.offset = paginator.getOffset()
-    }
-
-    if (Object.keys(filter).length > 0) {
-      options.where = filter
-    }
-
-    const items = await this.repository.findAll(options)
+    const items = await this.repository.findAll(options as any)
 
     return items as unknown as R[]
   }
@@ -171,7 +140,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     const cleanedEntity = removeUndefined(updateEntity)
     const filter = this.#serializeCondition(condition)
 
-    const items = await this.repository.findAll({ where: filter, limit: 2 })
+    const items = await this.repository.findAll(this.#buildFindOptions(filter, undefined, undefined, 2) as any)
 
     if (!items.length) {
       throw new Error('Entity to update not found')
@@ -227,44 +196,65 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   public stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R> {
     const { select = '*', paginator, condition, sort } = payload
 
-    const knex = this.getKnex()
-    const queryBuilder = knex.queryBuilder<DBEntity, R[]>()
+    if (paginator && !sort) {
+      throw new Error('Sort is required when paginator is used')
+    }
 
-    queryBuilder.from(this.getTable())
+    const kysely = this.getKysely()
+    const table = this.getTable()
+    let qb = kysely.selectFrom(table) as SelectQueryBuilder<any, string, any>
 
     const mappedSelect = this.#mapSelect(select)
-    if (Array.isArray(mappedSelect)) {
+    if (mappedSelect === '*' || (Array.isArray(mappedSelect) && mappedSelect.includes('*'))) {
+      qb = qb.selectAll()
+    } else if (Array.isArray(mappedSelect)) {
       for (const field of mappedSelect) {
-        if (field !== '*') MikroRepository.#validateIdentifier(field, 'select')
+        MikroRepository.#validateIdentifier(field, 'select')
       }
-    }
-    queryBuilder.select(mappedSelect)
-
-    if (paginator) {
-      if (!sort) {
-        throw new Error('Sort is required when paginator is used')
-      }
-
-      this.#attachPaginatorToQB(paginator, queryBuilder)
+      qb = qb.select(mappedSelect)
+    } else {
+      MikroRepository.#validateIdentifier(mappedSelect, 'select')
+      qb = qb.select([mappedSelect])
     }
 
     if (sort) {
       for (const [field, dir] of Object.entries(sort)) {
         const mapped = this.#mapField(field)
         MikroRepository.#validateIdentifier(mapped, 'sort')
-        queryBuilder.orderBy(mapped, dir)
+        qb = qb.orderBy(mapped, dir)
       }
     }
 
-    if (condition) {
-      const serializer = this.config.conditionRegistry.getSerializer<KnexConditionApplier>(AdapterType.KNEX)
-      const fieldMapping = this.mapper.getFieldMapping()
-      const applier = serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
-      applier(queryBuilder)
+    if (paginator) {
+      if (paginator.getLimit()) qb = qb.limit(paginator.getLimit())
+      if (paginator.getOffset()) qb = qb.offset(paginator.getOffset())
     }
 
+    if (condition) {
+      const serializer = this.config.conditionRegistry.getSerializer<KyselyConditionApplier>(AdapterType.KYSELY)
+      const fieldMapping = this.mapper.getFieldMapping()
+      const applier = serializer.serialize(condition, fieldMapping ? { fieldMapping } : undefined)
+      qb = applier(qb)
+    }
+
+    const passThrough = new PassThrough({ objectMode: true })
     const transformToDomain = this.#createDomainStreamFromRawData()
-    return queryBuilder.stream().pipe(transformToDomain) as PassThrough & AsyncIterable<R>
+    passThrough.pipe(transformToDomain)
+
+    void (async () => {
+      try {
+        for await (const row of qb.stream()) {
+          if (!passThrough.write(row)) {
+            await new Promise<void>((resolve) => passThrough.once('drain', resolve))
+          }
+        }
+        passThrough.end()
+      } catch (err) {
+        passThrough.destroy(err as Error)
+      }
+    })()
+
+    return transformToDomain as unknown as PassThrough & AsyncIterable<R>
   }
 
   public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number> {
@@ -289,28 +279,66 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     // Apply hook to peeked item so field mapping includes hook-added fields
     const sample = this.config.hooks?.beforeInsert?.(first) ?? first
 
-    // Build field mapping from entity properties to DB columns
-    const mapping = this.#buildFieldMapping(sample)
-
-    // Convert domain entities to database entities stream
+    // Build field mapping from entity properties to DB columns from one sample row;
+    // the same mapping applies to the whole stream.
+    const objectToDBmapping = this.#buildFieldMapping(sample)
     const entityStream = this.#createEntityStream(replayStream)
 
-    const knex = this.em.getTransactionContext<Knex>() ?? this.getKnex()
-    const strategy = resolveBulkInsertStrategy(knex)
+    const strategy = this.config.bulkInsertStrategy ?? MikroRepository.#defaultBulkInsertStrategy
 
-    return strategy.execute(knex, entityStream, {
+    return strategy.execute({
+      kysely: this.getKysely(),
+      isInTransaction: this.scope.isInTransaction(),
       table: this.getTable(),
-      objectToDBmapping: mapping,
+      stream: entityStream,
+      objectToDBmapping,
     })
   }
 
-  protected getKnex(): Knex {
-    return KnexHelper.getKnex(this.em)
+  protected getKysely(): AnyKysely {
+    return (this.em as unknown as { getKysely(): AnyKysely }).getKysely()
   }
 
   protected getTable(): string {
     const meta = this.em.getMetadata().get(this.config.entityClass)
     return meta.tableName
+  }
+
+  // The new MikroORM 7 typing folds in a `WithUsingOptions` conditional over `IndexName<Entity>`,
+  // which TS cannot reduce while `DBEntity` is still a free generic. The runtime shape we hand
+  // back is exactly what `EntityRepository.findAll` expects, so the cast is safe.
+  #buildFindOptions(
+    filter: FilterQuery<DBEntity>,
+    sort?: Record<string, 'asc' | 'desc'>,
+    paginator?: Paginator,
+    limit?: number
+  ): FindAllOptionsArg<DBEntity> {
+    const options: Record<string, unknown> = {}
+
+    if (sort) {
+      const orderBy: Record<string, 'asc' | 'desc'> = {}
+      for (const [field, dir] of Object.entries(sort)) {
+        const mapped = this.#mapField(field)
+        MikroRepository.#validateIdentifier(mapped, 'sort')
+        orderBy[mapped] = dir
+      }
+      options.orderBy = orderBy as OrderDefinition<DBEntity>
+    }
+
+    if (paginator) {
+      options.limit = paginator.getLimit()
+      options.offset = paginator.getOffset()
+    }
+
+    if (limit !== undefined) {
+      options.limit = limit
+    }
+
+    if (Object.keys(filter).length > 0) {
+      options.where = filter
+    }
+
+    return options as FindAllOptionsArg<DBEntity>
   }
 
   #mapField(field: string): string {
@@ -328,16 +356,6 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   static #validateIdentifier(name: string, context: string): void {
     if (!SAFE_IDENTIFIER_RE.test(name)) {
       throw new Error(`Invalid ${context} field name: ${name}`)
-    }
-  }
-
-  #attachPaginatorToQB(paginator: Paginator, qb: Knex.QueryBuilder<DBEntity, any[]>): void {
-    if (paginator.getLimit()) {
-      qb.limit(paginator.getLimit())
-    }
-
-    if (paginator.getOffset()) {
-      qb.offset(paginator.getOffset())
     }
   }
 
@@ -410,7 +428,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     })
   }
 
-  #createEntityStream(stream: PassThrough & AsyncIterable<DomainEntity>): PassThrough & AsyncIterable<DBEntity> {
+  // Transforms a domain-entity stream into a DB-entity stream (post-mapper +
+  // post-hook). Strategies consume these rows keyed by entity property names
+  // and apply the property→column mapping themselves.
+  #createEntityStream(stream: PassThrough & AsyncIterable<DomainEntity>): PassThrough & AsyncIterable<Record<string, unknown>> {
     const mapper = this.mapper
     const hooks = this.config.hooks
 
@@ -427,8 +448,15 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       },
     })
 
-    return stream.pipe(transform) as PassThrough & AsyncIterable<DBEntity>
+    return stream.pipe(transform) as PassThrough & AsyncIterable<Record<string, unknown>>
   }
+
+  static readonly #defaultBulkInsertStrategy: IMikroBulkInsertStrategy = new KyselyChunkedBulkInsertStrategy()
 }
 
 type UpdateDto<Entity> = Partial<EntityDTO<FromEntityType<Entity>>>
+
+// Argument type for `EntityRepository.findAll` — the v7 signature wraps options in
+// `WithUsingOptions<FindAllOptions<E>, E, IndexName<E>>`. We construct the option bag dynamically
+// and rely on the `findAll` parameter type to validate at the call site.
+type FindAllOptionsArg<E extends object> = Parameters<EntityRepository<E>['findAll']>[0] & object

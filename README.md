@@ -11,7 +11,7 @@ Backend applications accumulate infrastructure concerns that are tedious to buil
 - **Connection scoping** — `AsyncLocalStorage`-based transaction propagation. No passing `trx` through every function; nested calls automatically become savepoints.
 - **Repository + Mapper pattern** — generic CRUD interface (`IRepository`) with clean separation between domain models (camelCase) and database entities (snake_case). Your services depend on the interface, not the ORM.
 - **Swappable implementations** — `KnexRepository` and `MikroRepository` implement the same interface. Switch between Knex, MikroORM, or your own implementation without touching business logic.
-- **Bulk insert strategies** — PostgreSQL `COPY FROM STDIN` for high-volume loading, batched `INSERT` fallback, extensible per database.
+- **Bulk insert strategies** — PostgreSQL `COPY FROM STDIN` and SQL Server `BulkLoad` (TDS BCP) for high-volume loading, batched `INSERT` fallback, extensible per database.
 - **Utilities** — pagination, deep cloning, stream helpers, object manipulation.
 
 ## Installation
@@ -30,17 +30,31 @@ All peer dependencies are **optional** — install only what you need. This enab
 pnpm add @cleverjs/condition-builder knex pg
 ```
 
-**For MikroORM repositories:**
+**For MikroORM repositories (v7+):**
 
 ```bash
-pnpm add @cleverjs/condition-builder @mikro-orm/core @mikro-orm/knex
+pnpm add @cleverjs/condition-builder @mikro-orm/core @mikro-orm/decorators kysely
 ```
 
-**For PostgreSQL bulk insert (COPY):**
+MikroORM v7 split entity decorators (`@Entity`, `@PrimaryKey`, `@Property`) into a separate `@mikro-orm/decorators` package. Import the legacy (TypeScript experimental) decorators from `@mikro-orm/decorators/legacy` or the stage-3 ES decorators from `@mikro-orm/decorators/es`. Set `metadataProvider: ReflectMetadataProvider` (also from that package) if you rely on TS metadata reflection.
+
+> **MikroORM v6 users:** v7 replaces Knex with Kysely under the hood. `em.getKnex()` is gone — use `em.getKysely()`. `@mikro-orm/knex` no longer exists as a separate package. See [`MikroORM 7 release notes`](https://mikro-orm.io/blog/mikro-orm-7-released).
+
+**For PostgreSQL bulk insert (streaming COPY):**
 
 ```bash
 pnpm add pg pg-copy-streams
 ```
+
+The Mikro-side `PostgresCopyBulkInsertStrategy` takes a `pg.Pool` directly so the same pool can be shared with MikroORM via `driverOptions: new PostgresDialect({ pool })`.
+
+**For SQL Server bulk insert (TDS BulkLoad):**
+
+```bash
+pnpm add tedious
+```
+
+The Mikro-side `MssqlBulkLoadBulkInsertStrategy` takes a caller-managed `ITediousConnectionFactory`; you control connection lifecycle (pool or per-call).
 
 **For utilities only (Cloner, Paginator, helpers):**
 
@@ -81,11 +95,24 @@ src/
 │   │   ├── FieldMapper.ts
 │   │   ├── MikroIdentityMapper.ts
 │   │   └── MikroFieldMapper.ts
-│   └── bulk-insert/            # Bulk insert strategies
-│       ├── IBulkInsertStrategy.ts
-│       ├── PostgresBulkInsertStrategy.ts
-│       ├── FallbackBulkInsertStrategy.ts
-│       └── BulkInsertStrategyRegistry.ts
+│   └── bulk-insert/                # Bulk insert strategies
+│       ├── IBulkInsertStrategy.ts          # KnexRepository side
+│       ├── resolveBulkInsertStrategy.ts
+│       ├── mikroorm/                       # knex-based (used by KnexRepository)
+│       │   ├── PostgresBulkInsertStrategy.ts
+│       │   ├── FallbackBulkInsertStrategy.ts
+│       │   ├── MssqlBulkInsertStrategy.ts
+│       │   └── mssql/
+│       │       ├── MssqlSchemaInspector.ts
+│       │       └── sqlTypeMap.ts
+│       └── mikro/                          # Kysely-based (used by MikroRepository, v7+)
+│           ├── IMikroBulkInsertStrategy.ts
+│           ├── KyselyChunkedBulkInsertStrategy.ts
+│           ├── PostgresCopyBulkInsertStrategy.ts
+│           ├── MssqlBulkLoadBulkInsertStrategy.ts
+│           ├── KyselyMssqlSchemaInspector.ts
+│           ├── detectKyselyDialect.ts
+│           └── resolveMikroBulkInsertStrategy.ts
 └── utils/
     ├── Paginator.ts
     ├── list-with-pagination.ts
@@ -262,20 +289,51 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
 })
 ```
 
-**Creating a repository — MikroORM:**
+**Creating a repository — MikroORM (v7):**
 
 ```typescript
 import { MikroConnectionScope, MikroRepository, MikroIdentityMapper } from '@cleverjs/toolkit'
-import { ConditionAdapterRegistry } from '@cleverjs/condition-builder'
+import { AdapterType, ConditionAdapterRegistry, KyselyConditionAdapter, MikroOrmConditionAdapter } from '@cleverjs/condition-builder'
+import { MikroORM } from '@mikro-orm/core'
+import { ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
+import { PostgreSqlDriver } from '@mikro-orm/postgresql'
+
+const orm = await MikroORM.init({
+  driver: PostgreSqlDriver,
+  metadataProvider: ReflectMetadataProvider,    // v7: no longer auto-loaded
+  entities: [UserEntity],
+  dbName: 'app',
+  host: 'localhost', port: 5432, user: '...', password: '...',
+})
 
 const em = orm.em.fork()
 const scope = new MikroConnectionScope(em)
 const mapper = new MikroIdentityMapper<User, UserEntity>(UserEntity)
+
 const conditionRegistry = new ConditionAdapterRegistry()
+conditionRegistry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
+conditionRegistry.register(AdapterType.KYSELY, new KyselyConditionAdapter())  // needed for repo.stream()
+
 const userRepo = new MikroRepository<UserEntity, User>(scope, mapper, {
   entityClass: UserEntity,
   conditionRegistry,
 })
+```
+
+The entity itself uses the v7 decorator package:
+
+```typescript
+import { BaseEntity } from '@mikro-orm/core'
+import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy'
+
+@Entity({ tableName: 'users' })
+class UserEntity extends BaseEntity {
+  @PrimaryKey({ autoincrement: true })
+  public id?: number
+
+  @Property()
+  public name: string = ''
+}
 ```
 
 ### Repository Hooks
@@ -366,47 +424,109 @@ await scope.transaction(async () => { /* ... */ }, { isolationLevel: 'serializab
 
 ### Bulk Insert Strategies
 
-For high-volume data loading, the toolkit provides database-specific bulk insert strategies. Both repository implementations call `bulkInsert()` on the `IRepository` interface.
-
-**Creating a stream and calling bulkInsert:**
+The toolkit has **two parallel families** of bulk insert strategies — one for each repository — because MikroORM v7 dropped Knex in favor of Kysely. Both repositories call `bulkInsert()` on the `IRepository` interface; what differs is how they reach the database driver underneath.
 
 ```typescript
 import { PassThrough } from 'stream'
 
-// Create an object-mode stream of domain entities
 const stream = new PassThrough({ objectMode: true })
-for (const item of largeDataset) {
-  stream.write(item)
-}
+for (const item of largeDataset) stream.write(item)
 stream.end()
 
 const rowCount = await repository.bulkInsert(stream)
 ```
 
-**How strategies are selected:**
+#### KnexRepository — `resolveBulkInsertStrategy(knex)`
 
-- **MikroRepository** uses `BulkInsertStrategyRegistry` to auto-detect the database. For PostgreSQL it selects `PostgresBulkInsertStrategy` (uses `COPY FROM STDIN`); for other databases it falls back to `FallbackBulkInsertStrategy` (batched `INSERT` statements).
-- **KnexRepository** uses the `bulkInsertStrategy` from its config, defaulting to `FallbackBulkInsertStrategy`. To use PostgreSQL COPY with Knex, pass the strategy explicitly:
+Reads the dialect from `knex.client.config.client`:
+
+| Dialect | Strategy | Mechanism |
+|---|---|---|
+| `pg` / `postgresql` | `PostgresBulkInsertStrategy` | `COPY ... FROM STDIN` |
+| `mssql` / `tedious` | `MssqlBulkInsertStrategy` | TDS `BulkLoad` (BCP); schema auto-discovered |
+| anything else | `FallbackBulkInsertStrategy` | Batched `INSERT` (default batch 1000) |
+
+`KnexRepository.bulkInsert()` resolves automatically; override via `IKnexRepositoryConfig.bulkInsertStrategy`. The strategies acquire raw `pg.Client` / `tedious.Connection` directly from `knex.client.acquireConnection()` and participate in `KnexConnectionScope` transactions when the scope holds the same knex transaction.
+
+#### MikroRepository — `resolveMikroBulkInsertStrategy(deps)`
+
+MikroORM v7's Kysely keeps its `pg.Pool` / tedious connections in hash-private fields — there is no `em.getKnex()` to extract a usable raw connection. The Mikro-side strategies therefore take a caller-managed driver resource (a `pg.Pool` you also pass to MikroORM via `driverOptions: new PostgresDialect({ pool })`, or a tedious connection factory).
 
 ```typescript
-import { PostgresBulkInsertStrategy } from '@cleverjs/toolkit'
+import { Pool } from 'pg'
+import { PostgresDialect } from 'kysely'
+import { MikroORM } from '@mikro-orm/core'
+import {
+  MikroConnectionScope, MikroRepository, MikroIdentityMapper,
+  resolveMikroBulkInsertStrategy,
+} from '@cleverjs/toolkit'
 
-const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
-  table: 'users',
-  primary: ['email'],
-  bulkInsertStrategy: new PostgresBulkInsertStrategy(),
+const pgPool = new Pool({ host, port, user, password, database })
+
+const orm = await MikroORM.init({
+  driver: PostgreSqlDriver,
+  driverOptions: new PostgresDialect({ pool: pgPool }),  // ← share the pool
+  dbName: database,
+  // ...
+})
+
+const repo = new MikroRepository(new MikroConnectionScope(orm.em.fork()), mapper, {
+  entityClass: UserEntity,
   conditionRegistry,
+  bulkInsertStrategy: resolveMikroBulkInsertStrategy({
+    kysely: orm.em.getKysely(),
+    pgPool,                                              // ← same pool to the strategy
+  }),
+})
+
+await repo.bulkInsert(stream)
+```
+
+Selection rules (resolver):
+
+| Detected dialect + resource | Strategy | Mechanism |
+|---|---|---|
+| `postgres` + `pgPool` | `PostgresCopyBulkInsertStrategy` | `COPY ... FROM STDIN` via `pg-copy-streams`, streamed from the shared `pg.Pool` |
+| `mssql` + `mssqlFactory` | `MssqlBulkLoadBulkInsertStrategy` | TDS `BulkLoad`; schema discovered through Kysely (`KyselyMssqlSchemaInspector`) |
+| anything else | `KyselyChunkedBulkInsertStrategy` (default) | Chunked multi-row `INSERT` via Kysely (default batch 1000) |
+
+Dialect detection reads `kysely.getExecutor().adapter.constructor.name`. Override via the `dialect` field of the resolver deps if needed.
+
+**MSSQL example:**
+
+```typescript
+import { Connection } from 'tedious'
+
+const mssqlFactory = {
+  acquire: () => new Promise<Connection>((resolve, reject) => {
+    const c = new Connection(tediousConfig)
+    c.on('connect', err => err ? reject(err) : resolve(c))
+    c.connect()
+  }),
+  release: (c, err) => c.close?.(),  // pass err to skip returning a poisoned conn to a pool
+}
+
+const strategy = resolveMikroBulkInsertStrategy({
+  kysely: orm.em.getKysely(),
+  mssqlFactory,
 })
 ```
 
-You can register custom strategies for other databases:
+#### Transaction semantics (Mikro side)
+
+`KyselyChunkedBulkInsertStrategy` uses the transactional Kysely from the scope and therefore participates in `scope.transaction()` like any other write — rollback discards the inserted rows.
+
+`PostgresCopyBulkInsertStrategy` and `MssqlBulkLoadBulkInsertStrategy` cannot run inside a MikroORM transaction (Kysely holds the transactional connection and won't release it externally). When invoked inside `scope.transaction()`, they **transparently fall back** to `KyselyChunkedBulkInsertStrategy` so commit/rollback still work — just at the chunked-INSERT rate instead of native COPY / BulkLoad speed. Pass `fallbackInTransaction: false` to the strategy options to throw instead of falling back.
 
 ```typescript
-const registry = BulkInsertStrategyRegistry.getInstance()
-registry.registerStrategy(new MySQLBulkInsertStrategy())
-```
+// Outside scope.transaction() — uses native COPY:
+await repo.bulkInsert(millionRowStream)
 
-> **Note:** `bulkInsert()` participates in transactions normally — both PostgreSQL `COPY` and batched `INSERT` strategies respect `scope.transaction()`. If the transaction rolls back, the bulk-inserted rows are discarded.
+// Inside scope.transaction() — silently falls back to chunked INSERT (still transactional):
+await scope.transaction(async () => {
+  await repo.bulkInsert(smallStream)
+})
+```
 
 ### Listing with Pagination
 
@@ -481,7 +601,7 @@ intersect(new Set([1, 2]), new Set([2, 3]))        // Set { 2 }
 ### Other Utilities
 
 ```typescript
-import { peekAndReplayStream, convertToBoolean, KnexHelper } from '@cleverjs/toolkit'
+import { peekAndReplayStream, convertToBoolean } from '@cleverjs/toolkit'
 
 // Peek at first item of a stream without consuming it
 const { first, replayStream } = await peekAndReplayStream(sourceStream)
@@ -490,10 +610,9 @@ const { first, replayStream } = await peekAndReplayStream(sourceStream)
 convertToBoolean('yes')   // true
 convertToBoolean('0')     // false
 convertToBoolean(1)       // true
-
-// Extract the underlying Knex instance from a MikroORM EntityManager
-const knex = KnexHelper.getKnex(em)
 ```
+
+> `KnexHelper.getKnex(em)` was removed in the MikroORM v7 migration — `em.getKnex()` no longer exists in v7. Use `em.getKysely()` (or `MikroRepository`'s protected `getKysely()`) for raw query access.
 
 Also exported: `getKeyByValue`, `TClass`, `PropertySchema`, and type guard helpers (`isInstanceOf`, `isExactInstanceOf`) via `@cleverjs/toolkit`.
 

@@ -53,11 +53,11 @@ describe('KnexRepository', () => {
       { table: 'test_knex_users', primary: ['email'], conditionRegistry: conditionAdapterRegistry }
     )
 
-    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(
-      scope,
-      new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }),
-      { table: 'test_knex_jobs', primary: ['id'], conditionRegistry: conditionAdapterRegistry }
-    )
+    repositoryJob = new KnexRepository<JobDBEntity, Job, 'id'>(scope, new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }), {
+      table: 'test_knex_jobs',
+      primary: ['id'],
+      conditionRegistry: conditionAdapterRegistry,
+    })
   })
 
   afterAll(async () => {
@@ -832,11 +832,12 @@ describe('KnexRepository', () => {
         },
       }
 
-      hookedRepository = new KnexRepository<JobDBEntity, Job, 'id'>(
-        scope,
-        new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }),
-        { table: 'test_knex_jobs', primary: ['id'], conditionRegistry: conditionAdapterRegistry, hooks }
-      )
+      hookedRepository = new KnexRepository<JobDBEntity, Job, 'id'>(scope, new FieldMapper<Job, JobDBEntity>({ createdAt: 'created_at' }), {
+        table: 'test_knex_jobs',
+        primary: ['id'],
+        conditionRegistry: conditionAdapterRegistry,
+        hooks,
+      })
     })
 
     beforeEach(async () => {

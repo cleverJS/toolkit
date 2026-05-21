@@ -1,6 +1,6 @@
 {
   "name": "@cleverjs/toolkit",
-  "version": "1.1.4",
+  "version": "2.0.0",
   "description": "TypeScript toolkit with utilities, helpers, and MikroORM repository patterns for building applications",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",
@@ -11,6 +11,9 @@
     "prepublishOnly": "npm run build",
     "tests": "vitest --config vitest.config.ts",
     "test-coverage": "vitest run --coverage --config vitest.config.ts"
+  },
+  "engines": {
+    "node": ">=22.17"
   },
   "exports": {
     ".": {
@@ -55,21 +58,19 @@
   "license": "MIT",
   "type": "commonjs",
   "peerDependencies": {
-    "@cleverjs/condition-builder": "^1.0.6",
-    "@mikro-orm/core": "^6.6.7",
-    "@mikro-orm/knex": "^6.6.7",
-    "knex": "^3.1.0",
+    "@cleverjs/condition-builder": "^1.1.0",
+    "@mikro-orm/core": "^7.0.0",
+    "knex": "^3.0.0",
     "pg": "^8.0.0",
-    "pg-copy-streams": "^7.0.0"
+    "pg-copy-streams": "^7.0.0",
+    "tedious": "^19.0.0",
+    "tslib": "^2.0.0"
   },
   "peerDependenciesMeta": {
     "@cleverjs/condition-builder": {
       "optional": true
     },
     "@mikro-orm/core": {
-      "optional": true
-    },
-    "@mikro-orm/knex": {
       "optional": true
     },
     "knex": {
@@ -80,45 +81,50 @@
     },
     "pg-copy-streams": {
       "optional": true
+    },
+    "tedious": {
+      "optional": true
     }
   },
   "devDependencies": {
-    "@cleverjs/condition-builder": "^1.0.6",
+    "@cleverjs/condition-builder": "^1.1.0",
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
-    "@mikro-orm/core": "^6.6.7",
-    "@mikro-orm/knex": "^6.6.7",
-    "@mikro-orm/postgresql": "^6.6.7",
-    "@swc/cli": "^0.7.10",
-    "@swc/core": "^1.15.10",
+    "@mikro-orm/core": "^7.1.0",
+    "@mikro-orm/decorators": "^7.1.0",
+    "@mikro-orm/postgresql": "^7.1.0",
+    "@swc/cli": "^0.8.1",
+    "@swc/core": "^1.15.33",
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.18.13",
-    "@types/pg": "^8.16.0",
+    "@types/pg": "^8.20.0",
     "@types/pg-copy-streams": "^1.2.5",
     "@types/supertest": "^6.0.3",
-    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/coverage-v8": "^4.1.7",
     "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.2.3",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-security": "^3.0.1",
     "eslint-plugin-sonarjs": "^3.0.5",
     "globals": "^17.0.0",
-    "knex": "^3.1.0",
-    "pg": "^8.17.2",
+    "knex": "^3.2.10",
+    "kysely": "^0.29.2",
+    "pg": "^8.21.0",
     "pg-copy-streams": "^7.0.0",
-    "pg-query-stream": "^4.11.2",
+    "pg-query-stream": "^4.15.0",
     "prettier": "^3.8.1",
     "source-map-support": "^0.5.21",
     "supertest": "^7.2.2",
+    "tedious": "^19.2.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",
     "unplugin-swc": "^1.5.9",
     "vite-tsconfig-paths": "^6.0.5",
-    "vitest": "^4.0.18",
-    "dotenv": "^17.2.3"
+    "vitest": "^4.1.7"
   },
   "packageManager": "pnpm@10.11.1",
   "sideEffects": false

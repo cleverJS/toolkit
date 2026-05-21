@@ -28,4 +28,26 @@ services:
       timeout: 2s
       retries: 5
       start_period: 5s
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-20.04
+    platform: linux/amd64
+    container_name: cleverjs-test-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    tmpfs:
+      - /var/opt/mssql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b -o /dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes: {}
 

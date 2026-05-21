@@ -130,5 +130,4 @@ describe('FallbackBulkInsertStrategy', () => {
     expect(rows[0].name).toBe('Mapped')
     expect(rows[0].price).toBe(99)
   })
-
 })

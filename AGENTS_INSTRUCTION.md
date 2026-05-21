@@ -111,6 +111,8 @@ interface IRepositoryHooks<DomainEntity> {
 
 ### MikroRepository
 
+Targets MikroORM **v7**, which replaced Knex with Kysely as the underlying query builder. `getKysely()` returns the Kysely instance bound to the current scope (transactional inside `scope.transaction()`).
+
 ```ts
 class MikroRepository<
   DBEntity extends BaseEntity,
@@ -122,16 +124,30 @@ class MikroRepository<
     mapper: IMapper<DomainEntity, DBEntity>,
     config: IMikroRepositoryConfig<DBEntity, DomainEntity>,
   )
-  protected getKnex(): Knex        // access underlying Knex
-  protected getTable(): string      // table name from entity metadata
+  protected getKysely(): Kysely<any>   // access underlying Kysely (transactional when in tx)
+  protected getTable(): string         // table name from entity metadata
 }
 
 interface IMikroRepositoryConfig<DBEntity extends BaseEntity = any, DomainEntity = any> {
   entityClass: EntityName<DBEntity>
   conditionRegistry: ConditionAdapterRegistry
   hooks?: IRepositoryHooks<DomainEntity>
+  /**
+   * Bulk insert backend. Defaults to `KyselyChunkedBulkInsertStrategy` (chunked
+   * multi-row INSERT via Kysely, transactional). For million-row loads, pass
+   * a dialect-specific strategy resolved via `resolveMikroBulkInsertStrategy()`.
+   */
+  bulkInsertStrategy?: IMikroBulkInsertStrategy
 }
 ```
+
+**MikroORM 7 setup notes:**
+
+- Decorators (`@Entity`, `@PrimaryKey`, `@Property`) moved to `@mikro-orm/decorators/legacy`. Import them from there, not `@mikro-orm/core`.
+- For TypeScript metadata reflection, explicitly set `metadataProvider: ReflectMetadataProvider` (from the same package) — v7 no longer auto-loads `reflect-metadata`.
+- `orm.schema.dropSchema()` / `createSchema()` were renamed to `drop()` / `create()`.
+- `em.getKnex()` is **gone**. `em.getKysely()` is the v7 equivalent; the repository wraps it via `getKysely()`.
+- To share a `pg.Pool` with the COPY strategy, pass it via `driverOptions: new PostgresDialect({ pool })` to `MikroORM.init`.
 
 ### KnexRepository
 
@@ -182,30 +198,132 @@ interface IConnectionScope<TConnection = unknown> {
 
 ## 3. Bulk insert strategies
 
+Two parallel families. Pick the one matching the repository:
+
+| Repository | Strategy family | Resolver |
+|---|---|---|
+| `KnexRepository` | `IBulkInsertStrategy<Knex>` (Knex package) | `resolveBulkInsertStrategy(knex)` |
+| `MikroRepository` | `IMikroBulkInsertStrategy` (Kysely + caller-managed driver) | `resolveMikroBulkInsertStrategy(deps)` |
+
+### 3.1 KnexRepository side (`IBulkInsertStrategy`)
+
 ```ts
 interface IBulkInsertStrategy<TConnection = unknown> {
   execute<T>(
     connection: TConnection,
     stream: PassThrough & AsyncIterable<T>,
     options: { table: string; objectToDBmapping: Record<string, string> }
-  ): Promise<number>  // returns row count
+  ): Promise<number>
 }
 ```
 
-| Strategy | How it works |
+| Strategy | Mechanism |
 |---|---|
-| `PostgresBulkInsertStrategy` | PostgreSQL `COPY ... FROM STDIN` (tab-delimited). Highest throughput. |
-| `FallbackBulkInsertStrategy` | Batched `INSERT` statements (default batch 1000). Works with any DB. |
-
-Auto-selection:
+| `PostgresBulkInsertStrategy` | PostgreSQL `COPY ... FROM STDIN` (tab-delimited). |
+| `MssqlBulkInsertStrategy` | SQL Server TDS `BulkLoad` (BCP) via tedious. Schema auto-discovered from knex's `columnInfo()` + `sys.columns`, cached per table. |
+| `FallbackBulkInsertStrategy` | Batched `INSERT` (default batch 1000). Any DB. |
 
 ```ts
 function resolveBulkInsertStrategy(knex: Knex): IBulkInsertStrategy<Knex>
 // 'pg' / 'postgresql' → PostgresBulkInsertStrategy
+// 'mssql' / 'tedious' → MssqlBulkInsertStrategy
 // everything else     → FallbackBulkInsertStrategy
 ```
 
-Repositories resolve the strategy automatically; you only need to care about this if overriding via `IKnexRepositoryConfig.bulkInsertStrategy`.
+`KnexRepository.bulkInsert()` resolves automatically; override via `IKnexRepositoryConfig.bulkInsertStrategy`.
+
+### 3.2 MikroRepository side (`IMikroBulkInsertStrategy`)
+
+MikroORM v7's Kysely manages its own connection pool with hash-private fields — there is no `em.getKnex()` to extract a usable raw connection. Streaming COPY / BulkLoad therefore need a caller-managed driver resource (a `pg.Pool` or a tedious connection factory), typically the same pool MikroORM was initialised with.
+
+```ts
+interface IMikroBulkInsertStrategy {
+  execute(ctx: IMikroBulkInsertContext): Promise<number>
+}
+
+interface IMikroBulkInsertContext {
+  kysely: Kysely<any>          // bound to current scope (transactional in `scope.transaction()`)
+  isInTransaction: boolean     // strategies use this to choose fallback
+  table: string
+  stream: PassThrough & AsyncIterable<Record<string, unknown>>  // post-mapper, keyed by entity props
+  objectToDBmapping: Record<string, string>                     // entity prop → DB column
+}
+```
+
+| Strategy | Mechanism | Resources |
+|---|---|---|
+| `KyselyChunkedBulkInsertStrategy` | Chunked multi-row INSERT via Kysely (default). Participates in MikroORM transactions. | none |
+| `PostgresCopyBulkInsertStrategy` | Streaming `COPY ... FROM STDIN` via `pg-copy-streams`. | `pool: pg.Pool` |
+| `MssqlBulkLoadBulkInsertStrategy` | TDS `BulkLoad` (BCP) via tedious. Schema discovered through Kysely (`KyselyMssqlSchemaInspector`). | `factory: ITediousConnectionFactory` |
+
+```ts
+function resolveMikroBulkInsertStrategy(deps: {
+  kysely: Kysely<any>                       // pass em.getKysely()
+  dialect?: 'postgres' | 'mssql' | 'mysql' | 'sqlite' | 'unknown'  // override auto-detect
+  pgPool?: IPgPoolLike                      // PG COPY path
+  mssqlFactory?: ITediousConnectionFactory  // MSSQL BulkLoad path
+  fallbackBatchSize?: number
+}): IMikroBulkInsertStrategy
+```
+
+Selection rules:
+- `postgres` + `pgPool` → `PostgresCopyBulkInsertStrategy`
+- `mssql` + `mssqlFactory` → `MssqlBulkLoadBulkInsertStrategy`
+- everything else → `KyselyChunkedBulkInsertStrategy`
+
+`detectKyselyDialect(kysely)` is exported separately if you need just the dialect; it reads `kysely.getExecutor().adapter.constructor.name`.
+
+**Transaction semantics** — `PostgresCopyBulkInsertStrategy` and `MssqlBulkLoadBulkInsertStrategy` cannot run inside a MikroORM transaction (Kysely owns the transactional connection and won't release it externally). When `ctx.isInTransaction` is true they transparently fall back to `KyselyChunkedBulkInsertStrategy`, which IS in the transaction, so commit/rollback still work — just slower than the native path. Pass `fallbackInTransaction: false` to the strategy options to throw instead.
+
+### PostgresCopyBulkInsertStrategy
+
+```ts
+new PostgresCopyBulkInsertStrategy({
+  pool: IPgPoolLike,                    // typically the same pg.Pool MikroORM uses
+  fallbackInTransaction?: boolean,      // default true (silent fallback to chunked)
+  fallbackBatchSize?: number,           // default 1000
+})
+```
+
+CSV escaping mirrors the knex-side strategy: `\t` delimiter, JSON-stringified objects, ISO Date strings, `null` for missing keys.
+
+### MssqlBulkLoadBulkInsertStrategy
+
+```ts
+new MssqlBulkLoadBulkInsertStrategy({
+  factory: ITediousConnectionFactory,   // user-managed tedious connection lifecycle
+  inspector?: IMssqlSchemaInspector,    // default: KyselyMssqlSchemaInspector(ctx.kysely)
+  timeout?: number,
+  bulkOptions?: { checkConstraints?, fireTriggers?, keepNulls?, lockTable?, order? },
+  cacheSchema?: boolean,                // default true
+  fallbackInTransaction?: boolean,      // default true
+  fallbackBatchSize?: number,
+})
+
+interface ITediousConnectionFactory {
+  acquire(): Promise<ITediousConnection>
+  release(conn: ITediousConnection, err?: unknown): void | Promise<void>  // err is non-null on BulkLoad failure
+}
+```
+
+A "fresh connection per call" factory is fine; the strategy passes a non-null `err` to `release()` when the BulkLoad fails so the caller can drop the connection rather than return it to a pool.
+
+Behavior matches the knex-side `MssqlBulkInsertStrategy`:
+- Identity / computed columns silently dropped from `objectToDBmapping`.
+- Case-insensitive column matching; canonical schema-cased name sent to BulkLoad.
+- Empty streams short-circuit (peek before acquire).
+- Connection error is handed back to `factory.release(conn, err)` so the caller can poison it.
+- Value coercion: `Buffer` / `ArrayBuffer` views pass through; plain objects → `JSON.stringify`; `Date` passes through; missing keys → `null`.
+- Schema-qualified names supported (`dbo.MyTable`, `[dbo].[MyTable]`); `OBJECT_ID()` resolution failures throw with a clear message.
+
+### KyselyMssqlSchemaInspector
+
+Standalone reusable inspector. Runs the same `information_schema.columns` + `sys.columns` queries as the knex inspector, but through Kysely:
+
+```ts
+new KyselyMssqlSchemaInspector(kysely).inspect('dbo.MyTable')
+// → IMssqlColumnDescriptor[]
+```
 
 ---
 
@@ -309,14 +427,6 @@ async function peekAndReplayStream<T>(
 // Throws 'Stream is empty' or 'Stream does not support async iteration'.
 ```
 
-### KnexHelper
-
-```ts
-class KnexHelper {
-  static getKnex(em: EntityManager): Knex   // extract Knex from MikroORM EM
-}
-```
-
 ### Type utilities
 
 ```ts
@@ -387,8 +497,11 @@ await scope.transaction(async () => {
 
 | Dependency | Required for |
 |---|---|
-| `@cleverjs/condition-builder` | Condition-based queries in repositories |
-| `@mikro-orm/core`, `@mikro-orm/knex` | `MikroRepository`, `MikroConnectionScope` |
-| `knex` | `KnexRepository`, `KnexConnectionScope`, bulk insert strategies |
-| `pg` | PostgreSQL connection |
-| `pg-copy-streams` | `PostgresBulkInsertStrategy` (COPY command) |
+| `@cleverjs/condition-builder` | Condition-based queries in repositories. Register `KyselyConditionAdapter` (`AdapterType.KYSELY`) for `MikroRepository.stream()`. |
+| `@mikro-orm/core` (v7+) | `MikroRepository`, `MikroConnectionScope` |
+| `@mikro-orm/decorators` | Entity decorators (`/legacy` for TS experimental, `/es` for stage-3) — moved out of `@mikro-orm/core` in v7 |
+| `kysely` | Runtime query builder used by MikroORM v7 and by the Mikro-side bulk insert strategies |
+| `knex` | `KnexRepository`, `KnexConnectionScope`, knex-side bulk insert strategies |
+| `pg` | PostgreSQL driver — shared between MikroORM (via `new PostgresDialect({ pool })`) and `PostgresCopyBulkInsertStrategy` |
+| `pg-copy-streams` | `PostgresBulkInsertStrategy` (knex) / `PostgresCopyBulkInsertStrategy` (Mikro) |
+| `tedious` | MSSQL driver — `MssqlBulkInsertStrategy` (knex) and `MssqlBulkLoadBulkInsertStrategy` (Mikro) |

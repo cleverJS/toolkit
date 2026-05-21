@@ -64,7 +64,7 @@ describe('peekAndReplayStream', () => {
       },
     })
     // Add dummy error listener to avoid crashing process
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
+
     sourceStream.on('error', () => {})
 
     await expect(peekAndReplayStream(sourceStream)).rejects.toThrow('Source error')
@@ -72,7 +72,6 @@ describe('peekAndReplayStream', () => {
 
   it('should propagate errors occurring after the first chunk', async () => {
     const sourceStream = new Readable({
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       read(_size) {
         this.push('chunk1')
         process.nextTick(() => this.emit('error', new Error('Delayed error')))
@@ -81,7 +80,7 @@ describe('peekAndReplayStream', () => {
       objectMode: true,
     })
     // Add dummy error handler to prevent crash before we handle it
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
+
     sourceStream.on('error', () => {})
 
     const { replayStream } = await peekAndReplayStream(sourceStream)
