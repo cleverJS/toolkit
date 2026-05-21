@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     globals: true,
     root: './',
-    setupFiles: ['dotenv/config'],
+    setupFiles: ['./tests/setup-env.ts'],
     // Integration tests share a single Postgres instance. MikroORM 7's `schema.create()`
     // introspects `information_schema` before issuing DDL, and the FallbackBulkInsertStrategy
     // suite (pure knex) concurrently creates/drops `fallback_test`, which races with the

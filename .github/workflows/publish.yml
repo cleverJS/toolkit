@@ -20,6 +20,10 @@ env:
   POSTGRES_USER: test_db
   POSTGRES_PASSWORD: test_db
   POSTGRES_DB: test_db
+  MSSQL_USER: sa
+  MSSQL_PASSWORD: 'YourStrong!Passw0rd'
+  MSSQL_SA_PASSWORD: 'YourStrong!Passw0rd'
+  MSSQL_DB: test_db
 
 jobs:
   test:
@@ -44,6 +48,20 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-20.04
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: ${{ env.MSSQL_SA_PASSWORD }}
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -55,11 +73,20 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm exec tsc --noEmit -p tsconfig.build.json
+      - name: Init MSSQL database
+        env:
+          MSSQL_CONTAINER_ID: ${{ job.services.mssql.id }}
+        run: |
+          docker exec "$MSSQL_CONTAINER_ID" \
+            /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" \
+            -Q "IF DB_ID('$MSSQL_DB') IS NULL CREATE DATABASE [$MSSQL_DB]"
       - name: Run tests
         run: pnpm run tests
         env:
           POSTGRES_HOST: localhost
           POSTGRES_PORT: 5433
+          MSSQL_HOST: localhost
+          MSSQL_PORT: 1433
       - name: Build package
         run: pnpm run build
       - name: Upload build artifacts

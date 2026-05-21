@@ -2,10 +2,8 @@ services:
   database:
     image: postgres:17.5-alpine
     container_name: cleverjs-test-postgres
-    environment:
-      POSTGRES_USER: test_db
-      POSTGRES_PASSWORD: test_db
-      POSTGRES_DB: test_db
+    env_file:
+      - .env.test
     ports:
       - "5433:5432"
     tmpfs:
@@ -23,7 +21,7 @@ services:
       - -c
       - work_mem=64MB
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_db"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
       interval: 2s
       timeout: 2s
       retries: 5
@@ -32,9 +30,10 @@ services:
     image: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-20.04
     platform: linux/amd64
     container_name: cleverjs-test-mssql
+    env_file:
+      - .env.test
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
       MSSQL_PID: Developer
     ports:
       - "1433:1433"
@@ -48,6 +47,20 @@ services:
       timeout: 5s
       retries: 20
       start_period: 30s
+  mssql-init:
+    image: mcr.microsoft.com/mssql/server:2019-CU27-ubuntu-20.04
+    platform: linux/amd64
+    container_name: cleverjs-test-mssql-init
+    depends_on:
+      mssql:
+        condition: service_healthy
+    env_file:
+      - .env.test
+    entrypoint:
+      - /bin/bash
+      - -c
+      - /opt/mssql-tools/bin/sqlcmd -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -Q "IF DB_ID('$$MSSQL_DB') IS NULL CREATE DATABASE [$$MSSQL_DB]"
+    restart: "no"
 
 volumes: {}
 

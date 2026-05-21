@@ -63,12 +63,11 @@
     "knex": "^3.0.0",
     "pg": "^8.0.0",
     "pg-copy-streams": "^7.0.0",
-    "tedious": "^19.0.0",
-    "tslib": "^2.0.0"
+    "tedious": "^19.0.0"
   },
   "peerDependenciesMeta": {
     "@cleverjs/condition-builder": {
-      "optional": true
+      "optional": false
     },
     "@mikro-orm/core": {
       "optional": true
@@ -85,6 +84,9 @@
     "tedious": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "tslib": "^2.8.1"
   },
   "devDependencies": {
     "@cleverjs/condition-builder": "^1.1.0",
