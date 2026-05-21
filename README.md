@@ -33,10 +33,10 @@ pnpm add @cleverjs/condition-builder knex pg
 **For MikroORM repositories (v7+):**
 
 ```bash
-pnpm add @cleverjs/condition-builder @mikro-orm/core @mikro-orm/decorators kysely
+pnpm add @cleverjs/condition-builder @mikro-orm/core kysely
 ```
 
-MikroORM v7 split entity decorators (`@Entity`, `@PrimaryKey`, `@Property`) into a separate `@mikro-orm/decorators` package. Import the legacy (TypeScript experimental) decorators from `@mikro-orm/decorators/legacy` or the stage-3 ES decorators from `@mikro-orm/decorators/es`. Set `metadataProvider: ReflectMetadataProvider` (also from that package) if you rely on TS metadata reflection.
+Entities are recommended to be declared via the `defineEntity()` builder from `@mikro-orm/core` — it's the path MikroORM v7 recommends for new projects, needs no `reflect-metadata`, no tsconfig decorator flags, and is fully type-inferred. If you prefer decorators, install `@mikro-orm/decorators` separately and import from `/legacy` (TypeScript experimental, needs `reflect-metadata` + `metadataProvider: ReflectMetadataProvider`) or `/es` (stage-3 standard).
 
 > **MikroORM v6 users:** v7 replaces Knex with Kysely under the hood. `em.getKnex()` is gone — use `em.getKysely()`. `@mikro-orm/knex` no longer exists as a separate package. See [`MikroORM 7 release notes`](https://mikro-orm.io/blog/mikro-orm-7-released).
 
@@ -295,13 +295,11 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
 import { MikroConnectionScope, MikroRepository, MikroIdentityMapper } from '@cleverjs/toolkit'
 import { AdapterType, ConditionAdapterRegistry, KyselyConditionAdapter, MikroOrmConditionAdapter } from '@cleverjs/condition-builder'
 import { MikroORM } from '@mikro-orm/core'
-import { ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
 import { PostgreSqlDriver } from '@mikro-orm/postgresql'
 
 const orm = await MikroORM.init({
   driver: PostgreSqlDriver,
-  metadataProvider: ReflectMetadataProvider,    // v7: no longer auto-loaded
-  entities: [UserEntity],
+  entities: [UserSchema],
   dbName: 'app',
   host: 'localhost', port: 5432, user: '...', password: '...',
 })
@@ -320,21 +318,27 @@ const userRepo = new MikroRepository<UserEntity, User>(scope, mapper, {
 })
 ```
 
-The entity itself uses the v7 decorator package:
+The entity is declared via `defineEntity()` — no decorators, no `reflect-metadata`:
 
 ```typescript
-import { BaseEntity } from '@mikro-orm/core'
-import { Entity, PrimaryKey, Property } from '@mikro-orm/decorators/legacy'
+import { BaseEntity, defineEntity } from '@mikro-orm/core'
 
-@Entity({ tableName: 'users' })
 class UserEntity extends BaseEntity {
-  @PrimaryKey({ autoincrement: true })
-  public id?: number
-
-  @Property()
-  public name: string = ''
+  id?: number
+  name: string = ''
 }
+
+const UserSchema = defineEntity({
+  class: UserEntity,
+  tableName: 'users',
+  properties: (p) => ({
+    id: p.integer().primary().autoincrement(),
+    name: p.string(),
+  }),
+})
 ```
+
+Pass `UserSchema` to `MikroORM.init({ entities: [...] })`. Keep using the class (`UserEntity`) wherever the toolkit asks for `entityClass` or a mapper constructor — `defineEntity({ class })` binds metadata to the class.
 
 ### Repository Hooks
 

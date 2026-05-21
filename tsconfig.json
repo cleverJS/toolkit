@@ -5,8 +5,6 @@
     "moduleResolution": "node",
     "esModuleInterop": true,
     "isolatedModules": false,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "outDir": "./dist",
     "rootDir": "./src",

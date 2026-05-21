@@ -5,8 +5,7 @@ import {
   KyselyConditionAdapter,
   MikroOrmConditionAdapter,
 } from '@cleverjs/condition-builder'
-import { BaseEntity, MikroORM } from '@mikro-orm/core'
-import { Entity, PrimaryKey, Property, ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
+import { BaseEntity, defineEntity, MikroORM } from '@mikro-orm/core'
 import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PostgresDialect } from 'kysely'
 import { Pool } from 'pg'
@@ -22,29 +21,29 @@ import {
 } from '../../../src'
 
 // Test Entity
-@Entity({ tableName: 'test_products' })
 class ProductEntity extends BaseEntity {
-  @PrimaryKey({ autoincrement: true })
   public id?: number
-
-  @Property()
   public name: string = ''
-
-  @Property({ type: 'float' })
   public price: number = 0
-
-  @Property({ fieldName: 'created_at' })
   public createdAt: Date = new Date()
-
-  @Property({ nullable: true })
   public description?: string
-
-  @Property({ fieldName: 'is_active', default: true })
   public isActive: boolean = false
-
-  @Property({ type: 'json', nullable: true })
   public metadata?: Record<string, any>
 }
+
+const ProductSchema = defineEntity({
+  class: ProductEntity,
+  tableName: 'test_products',
+  properties: (p) => ({
+    id: p.integer().primary().autoincrement(),
+    name: p.string(),
+    price: p.float(),
+    createdAt: p.datetime().fieldName('created_at'),
+    description: p.string().nullable(),
+    isActive: p.boolean().fieldName('is_active').default(true),
+    metadata: p.json<Record<string, any>>().nullable(),
+  }),
+})
 
 // Domain Entity
 interface Product {
@@ -94,9 +93,8 @@ describe('PostgreSQL Bulk Insert', () => {
     })
 
     orm = await MikroORM.init({
-      entities: [ProductEntity],
+      entities: [ProductSchema],
       driver: PostgreSqlDriver,
-      metadataProvider: ReflectMetadataProvider,
       driverOptions: new PostgresDialect({ pool: pgPool }),
       // MikroORM still wants a dbName even when a dialect is provided — used for schema ops.
       dbName: process.env.POSTGRES_DB || 'test_db',

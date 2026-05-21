@@ -7,8 +7,7 @@ import {
   KyselyConditionAdapter,
   MikroOrmConditionAdapter,
 } from '@cleverjs/condition-builder'
-import { BaseEntity, MikroORM } from '@mikro-orm/core'
-import { Entity, PrimaryKey, Property, ReflectMetadataProvider } from '@mikro-orm/decorators/legacy'
+import { BaseEntity, defineEntity, MikroORM } from '@mikro-orm/core'
 import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -31,9 +30,8 @@ describe('MikroRepository', () => {
 
     // Initialize MikroORM with PostgreSQL
     orm = await MikroORM.init({
-      entities: [UserEntity, JobEntity],
+      entities: [UserSchema, JobSchema],
       driver: PostgreSqlDriver,
-      metadataProvider: ReflectMetadataProvider,
       dbName: process.env.POSTGRES_DB || 'test_db',
       host: process.env.POSTGRES_HOST || 'localhost',
       port: parseInt(process.env.POSTGRES_PORT || '5433'),
@@ -883,38 +881,43 @@ describe('MikroRepository', () => {
 //region Class helpers
 
 // Test Entity
-@Entity({ tableName: 'test_users' })
 class UserEntity extends BaseEntity {
-  @Property({ primary: true })
   email: string = ''
-
-  @Property()
   name: string = ''
-
-  @Property()
   age: number = 0
-
-  @Property({ fieldName: 'is_active', default: true })
   isActive: boolean = true
-
-  @Property({ fieldName: 'created_at' })
   createdAt: Date = new Date()
-
-  @Property({ nullable: true })
   bio?: string
 }
 
-@Entity({ tableName: 'test_jobs' })
+const UserSchema = defineEntity({
+  class: UserEntity,
+  tableName: 'test_users',
+  properties: (p) => ({
+    email: p.string().primary(),
+    name: p.string(),
+    age: p.integer(),
+    isActive: p.boolean().fieldName('is_active').default(true),
+    createdAt: p.datetime().fieldName('created_at'),
+    bio: p.string().nullable(),
+  }),
+})
+
 class JobEntity extends BaseEntity {
-  @PrimaryKey({ autoincrement: true })
   id?: number
-
-  @Property()
   name: string = ''
-
-  @Property({ fieldName: 'created_at' })
   createdAt: Date = new Date()
 }
+
+const JobSchema = defineEntity({
+  class: JobEntity,
+  tableName: 'test_jobs',
+  properties: (p) => ({
+    id: p.integer().primary().autoincrement(),
+    name: p.string(),
+    createdAt: p.datetime().fieldName('created_at'),
+  }),
+})
 
 // Domain Entity
 interface User {

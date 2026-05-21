@@ -143,8 +143,8 @@ interface IMikroRepositoryConfig<DBEntity extends BaseEntity = any, DomainEntity
 
 **MikroORM 7 setup notes:**
 
-- Decorators (`@Entity`, `@PrimaryKey`, `@Property`) moved to `@mikro-orm/decorators/legacy`. Import them from there, not `@mikro-orm/core`.
-- For TypeScript metadata reflection, explicitly set `metadataProvider: ReflectMetadataProvider` (from the same package) — v7 no longer auto-loads `reflect-metadata`.
+- Recommended entity declaration is `defineEntity({ class, tableName, properties: p => ({...}) })` from `@mikro-orm/core`. No decorators, no `reflect-metadata`, no `experimentalDecorators` / `emitDecoratorMetadata` in tsconfig. Pass the resulting schema to `MikroORM.init({ entities: [...] })`; pass the class to `entityClass`/`MikroIdentityMapper` (the class still carries the metadata).
+- Decorators are still supported via the optional `@mikro-orm/decorators` package — `/legacy` (TS experimental, needs `reflect-metadata` + `metadataProvider: ReflectMetadataProvider`) or `/es` (stage-3 standard, explicit `type` annotations required). Install separately if you want them; not needed for `defineEntity`.
 - `orm.schema.dropSchema()` / `createSchema()` were renamed to `drop()` / `create()`.
 - `em.getKnex()` is **gone**. `em.getKysely()` is the v7 equivalent; the repository wraps it via `getKysely()`.
 - To share a `pg.Pool` with the COPY strategy, pass it via `driverOptions: new PostgresDialect({ pool })` to `MikroORM.init`.
@@ -499,7 +499,7 @@ await scope.transaction(async () => {
 |---|---|
 | `@cleverjs/condition-builder` | Condition-based queries in repositories. Register `KyselyConditionAdapter` (`AdapterType.KYSELY`) for `MikroRepository.stream()`. |
 | `@mikro-orm/core` (v7+) | `MikroRepository`, `MikroConnectionScope` |
-| `@mikro-orm/decorators` | Entity decorators (`/legacy` for TS experimental, `/es` for stage-3) — moved out of `@mikro-orm/core` in v7 |
+| `@mikro-orm/decorators` | Optional. Only if you choose decorator-based entities instead of the recommended `defineEntity()` from `@mikro-orm/core`. `/legacy` = TS experimental (needs `reflect-metadata`); `/es` = stage-3 standard. |
 | `kysely` | Runtime query builder used by MikroORM v7 and by the Mikro-side bulk insert strategies |
 | `knex` | `KnexRepository`, `KnexConnectionScope`, knex-side bulk insert strategies |
 | `pg` | PostgreSQL driver — shared between MikroORM (via `new PostgresDialect({ pool })`) and `PostgresCopyBulkInsertStrategy` |
