@@ -42,6 +42,13 @@
     },
     "./package.json": "./package.json"
   },
+  "typesVersions": {
+    "*": {
+      "knex": ["dist/types/knex.d.ts"],
+      "mikro": ["dist/types/mikro.d.ts"],
+      "objects": ["dist/types/objects.d.ts"]
+    }
+  },
   "files": [
     "dist/**/*",
     "src/**/*",
