@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { FallbackBulkInsertStrategy, MssqlBulkInsertStrategy, PostgresBulkInsertStrategy, resolveBulkInsertStrategy } from '../../../src'
+import { FallbackBulkInsertStrategy, MssqlBulkInsertStrategy, PostgresBulkInsertStrategy, resolveBulkInsertStrategy } from '../../../src/knex'
 
 function createFakeKnex(dialect: string): any {
   return { client: { config: { client: dialect } } }

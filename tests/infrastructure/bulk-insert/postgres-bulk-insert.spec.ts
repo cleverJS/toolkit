@@ -12,13 +12,8 @@ import { Pool } from 'pg'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  MikroConnectionScope,
-  MikroIdentityMapper,
-  MikroRepository,
-  PostgresCopyBulkInsertStrategy,
-  resolveMikroBulkInsertStrategy,
-} from '../../../src'
+import { MikroIdentityMapper } from '../../../src'
+import { MikroConnectionScope, MikroRepository, PostgresCopyBulkInsertStrategy, resolveMikroBulkInsertStrategy } from '../../../src/mikro'
 
 // Test Entity
 class ProductEntity extends BaseEntity {

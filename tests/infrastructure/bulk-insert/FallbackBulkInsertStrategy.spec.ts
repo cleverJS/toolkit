@@ -2,7 +2,7 @@ import knex, { Knex } from 'knex'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { FallbackBulkInsertStrategy } from '../../../src'
+import { FallbackBulkInsertStrategy } from '../../../src/knex'
 
 function jsonToStream<T>(arr: T[]): PassThrough & AsyncIterable<T> {
   const stream = new PassThrough({ objectMode: true })

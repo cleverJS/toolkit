@@ -2,7 +2,7 @@ import { PassThrough } from 'stream'
 import { TYPES } from 'tedious'
 import { describe, expect, it, vi } from 'vitest'
 
-import { IMssqlColumnDescriptor, IMssqlSchemaInspector, MssqlBulkInsertStrategy } from '../../../src'
+import { IMssqlColumnDescriptor, IMssqlSchemaInspector, MssqlBulkInsertStrategy } from '../../../src/knex'
 
 /**
  * Pure-unit tests for MssqlBulkInsertStrategy: drive the strategy through a

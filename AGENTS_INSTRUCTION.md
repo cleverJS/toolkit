@@ -9,9 +9,20 @@ TypeScript library: generic Repository pattern, bulk insert strategies, connecti
 **Import paths:**
 
 ```ts
-import { IRepository, KnexRepository, MikroRepository, ... } from '@cleverjs/toolkit'
+// Engine-agnostic core: interfaces, mappers, utilities, IBulkInsertStrategy contract
+import { IRepository, IConnectionScope, FieldMapper, IdentityMapper, Paginator, ... } from '@cleverjs/toolkit'
+
+// Knex-backed repository, scope, and bulk insert strategies (requires peers: knex, pg, pg-copy-streams, tedious)
+import { KnexRepository, KnexConnectionScope, resolveBulkInsertStrategy, ... } from '@cleverjs/toolkit/knex'
+
+// MikroORM-backed repository, scope, and Kysely-based bulk insert strategies (requires peers: @mikro-orm/core, kysely)
+import { MikroRepository, MikroConnectionScope, resolveMikroBulkInsertStrategy, ... } from '@cleverjs/toolkit/mikro'
+
+// Object helpers only
 import { removeNullish, removeUndefined, ... } from '@cleverjs/toolkit/objects'
 ```
+
+> Engine-bound symbols (`KnexRepository`, `MikroRepository`, `KnexConnectionScope`, `MikroConnectionScope`, all concrete bulk-insert strategies) are **not** exported from the root barrel `@cleverjs/toolkit` — import from `/knex` or `/mikro` subpath so peers stay optional.
 
 ---
 
@@ -440,13 +451,8 @@ type PropertySchema<T> = { /* data-only keys of T (strips methods) */ }
 
 ```ts
 import { Condition, ConditionAdapterRegistry } from '@cleverjs/condition-builder'
-import {
-  KnexConnectionScope,
-  KnexRepository,
-  FieldMapper,
-  Paginator,
-  listWithPagination,
-} from '@cleverjs/toolkit'
+import { FieldMapper, Paginator, listWithPagination } from '@cleverjs/toolkit'
+import { KnexConnectionScope, KnexRepository } from '@cleverjs/toolkit/knex'
 import Knex from 'knex'
 
 // 1. Define domain entity

@@ -2,7 +2,8 @@ import { AdapterType, Condition, ConditionAdapterRegistry, ConditionBuilder, Kne
 import knex, { Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { FieldMapper, IConnectionScope, IRepository, KnexConnectionScope, KnexRepository } from '../../src'
+import { FieldMapper, IConnectionScope, IRepository } from '../../src'
+import { KnexConnectionScope, KnexRepository } from '../../src/knex'
 
 // ---------------------------------------------------------------------------
 // Domain types

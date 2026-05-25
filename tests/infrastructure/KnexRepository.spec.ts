@@ -3,7 +3,8 @@ import knex, { Knex } from 'knex'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { FieldMapper, IRepositoryHooks, KnexConnectionScope, KnexRepository, Paginator } from '../../src'
+import { FieldMapper, IRepositoryHooks, Paginator } from '../../src'
+import { KnexConnectionScope, KnexRepository } from '../../src/knex'
 
 describe('KnexRepository', () => {
   let db: Knex

@@ -2,7 +2,7 @@ import knex, { Knex } from 'knex'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { MssqlBulkInsertStrategy, MssqlSchemaInspector } from '../../../src'
+import { MssqlBulkInsertStrategy, MssqlSchemaInspector } from '../../../src/knex'
 
 /**
  * Integration tests for the MSSQL bulk-insert pipeline. Requires the

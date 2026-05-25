@@ -12,7 +12,8 @@ import { EntityManager, PostgreSqlDriver } from '@mikro-orm/postgresql'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { IRepositoryHooks, MikroConnectionScope, MikroIdentityMapper, MikroRepository, Paginator } from '../../src'
+import { IRepositoryHooks, MikroIdentityMapper, Paginator } from '../../src'
+import { MikroConnectionScope, MikroRepository } from '../../src/mikro'
 
 describe('MikroRepository', () => {
   let orm: MikroORM

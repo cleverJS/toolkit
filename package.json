@@ -1,6 +1,6 @@
 {
   "name": "@cleverjs/toolkit",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "TypeScript toolkit with utilities, helpers, and MikroORM repository patterns for building applications",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",
@@ -21,6 +21,18 @@
       "require": "./dist/index.js",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./knex": {
+      "types": "./dist/types/knex.d.ts",
+      "require": "./dist/knex.js",
+      "import": "./dist/knex.js",
+      "default": "./dist/knex.js"
+    },
+    "./mikro": {
+      "types": "./dist/types/mikro.d.ts",
+      "require": "./dist/mikro.js",
+      "import": "./dist/mikro.js",
+      "default": "./dist/mikro.js"
     },
     "./objects": {
       "types": "./dist/types/objects.d.ts",

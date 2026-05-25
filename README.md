@@ -274,7 +274,8 @@ You can always implement `IMapper` directly for complex transformations (compute
 **Creating a repository — Knex:**
 
 ```typescript
-import { KnexConnectionScope, KnexRepository, FieldMapper } from '@cleverjs/toolkit'
+import { FieldMapper } from '@cleverjs/toolkit'
+import { KnexConnectionScope, KnexRepository } from '@cleverjs/toolkit/knex'
 import { ConditionAdapterRegistry } from '@cleverjs/condition-builder'
 import knex from 'knex'
 
@@ -292,7 +293,8 @@ const userRepo = new KnexRepository<UserDBEntity, User>(scope, mapper, {
 **Creating a repository — MikroORM (v7):**
 
 ```typescript
-import { MikroConnectionScope, MikroRepository, MikroIdentityMapper } from '@cleverjs/toolkit'
+import { MikroIdentityMapper } from '@cleverjs/toolkit'
+import { MikroConnectionScope, MikroRepository } from '@cleverjs/toolkit/mikro'
 import { AdapterType, ConditionAdapterRegistry, KyselyConditionAdapter, MikroOrmConditionAdapter } from '@cleverjs/condition-builder'
 import { MikroORM } from '@mikro-orm/core'
 import { PostgreSqlDriver } from '@mikro-orm/postgresql'
@@ -460,10 +462,11 @@ MikroORM v7's Kysely keeps its `pg.Pool` / tedious connections in hash-private f
 import { Pool } from 'pg'
 import { PostgresDialect } from 'kysely'
 import { MikroORM } from '@mikro-orm/core'
+import { MikroIdentityMapper } from '@cleverjs/toolkit'
 import {
-  MikroConnectionScope, MikroRepository, MikroIdentityMapper,
+  MikroConnectionScope, MikroRepository,
   resolveMikroBulkInsertStrategy,
-} from '@cleverjs/toolkit'
+} from '@cleverjs/toolkit/mikro'
 
 const pgPool = new Pool({ host, port, user, password, database })
 
@@ -622,10 +625,14 @@ Also exported: `getKeyByValue`, `TClass`, `PropertySchema`, and type guard helpe
 
 ## Export Subpaths
 
-| Subpath | Contents |
-|---|---|
-| `@cleverjs/toolkit` | Everything — repositories, scope, bulk insert, utilities |
-| `@cleverjs/toolkit/objects` | Object helpers only (`removeNullish`, `removeUndefined`, etc.) |
+Engine-bound code is split into per-engine subpaths so each peer dependency stays truly optional — the root entry never `require()`s `@mikro-orm/core`, `knex`, `tedious`, `pg`, `pg-copy-streams`, or `kysely`.
+
+| Subpath | Contents | Required peers |
+|---|---|---|
+| `@cleverjs/toolkit` | Engine-agnostic: `IRepository`, `IConnectionScope`, `IBulkInsertStrategy` (contract), `FieldMapper`, `IdentityMapper`, `MikroFieldMapper`, `MikroIdentityMapper`, `Paginator`, `Cloner`, helpers, type guards, `listWithPagination` | none |
+| `@cleverjs/toolkit/knex` | `KnexRepository`, `KnexConnectionScope`, `PostgresBulkInsertStrategy`, `MssqlBulkInsertStrategy`, `FallbackBulkInsertStrategy`, `MssqlSchemaInspector`, `resolveBulkInsertStrategy`, `resolveTediousDataType` | `knex` (+ `pg`/`pg-copy-streams` for postgres bulk, `tedious` for mssql bulk) |
+| `@cleverjs/toolkit/mikro` | `MikroRepository`, `MikroConnectionScope`, `KyselyChunkedBulkInsertStrategy`, `PostgresCopyBulkInsertStrategy`, `MssqlBulkLoadBulkInsertStrategy`, `KyselyMssqlSchemaInspector`, `detectKyselyDialect`, `resolveMikroBulkInsertStrategy` | `@mikro-orm/core`, `kysely` (+ `pg`/`pg-copy-streams` for postgres COPY, `tedious` for mssql BulkLoad) |
+| `@cleverjs/toolkit/objects` | Object helpers only (`removeNullish`, `removeUndefined`, etc.) | none |
 
 ## License
 
