@@ -31,6 +31,13 @@ interface IFakeConnectionOptions {
   rowCount?: number
   closeImpl?: () => void
   state?: { name: string }
+  /**
+   * Model a knex transaction client. Knex sets `transacting = true` on the
+   * trx client, whose `acquireConnection()` returns a single pinned connection
+   * and `releaseConnection()` is a no-op — which the fake already mimics by
+   * returning the same `connection` and a no-op release.
+   */
+  transacting?: boolean
 }
 
 function createFakeKnexAndConnection(opts: IFakeConnectionOptions = {}) {
@@ -79,6 +86,9 @@ function createFakeKnexAndConnection(opts: IFakeConnectionOptions = {}) {
   const client: any = {
     acquireConnection: vi.fn(async () => connection),
     releaseConnection: vi.fn(async () => undefined),
+  }
+  if (opts.transacting) {
+    client.transacting = true
   }
 
   const knex: any = { client }
@@ -364,6 +374,52 @@ describe('MssqlBulkInsertStrategy (unit)', () => {
         /knex client did not return a tedious-compatible connection/
       )
       expect(knex.client.releaseConnection).toHaveBeenCalled()
+    })
+  })
+
+  describe('transaction-pinned connection', () => {
+    // Inside a KnexConnectionScope transaction, knex hands the strategy the
+    // transaction's pinned connection (client.transacting === true). The BulkLoad
+    // runs on the transaction's own connection and is rolled back with it, so the
+    // strategy must NOT close/poison that connection on error — doing so would
+    // tear down the transaction's connection and break knex's own rollback.
+
+    it('does not close or call onError when BulkLoad rejects inside a transaction', async () => {
+      const schema: IMssqlColumnDescriptor[] = [
+        { name: 'name', type: TYPES.NVarChar, options: { length: 255, nullable: false }, isIdentity: false, isComputed: false },
+      ]
+      const bulkErr = new Error('TDS error')
+      const { knex, client, connection } = createFakeKnexAndConnection({ bulkLoadCallbackError: bulkErr, transacting: true })
+      const onError = vi.fn()
+      const strategy = new MssqlBulkInsertStrategy({ inspector: buildInspector(schema), onError })
+
+      // The original error still propagates...
+      await expect(strategy.execute(knex, jsonToStream([{ name: 'a' }]), { table: 'users', objectToDBmapping: { name: 'name' } })).rejects.toBe(
+        bulkErr
+      )
+
+      // ...but the transaction's connection is left intact for its rollback.
+      expect(connection.close).not.toHaveBeenCalled()
+      expect(onError).not.toHaveBeenCalled()
+      // Still released (a no-op on a transaction client) so the finally contract holds.
+      expect(client.releaseConnection).toHaveBeenCalledWith(connection)
+    })
+
+    it('does not close the connection on the success path inside a transaction', async () => {
+      const schema: IMssqlColumnDescriptor[] = [
+        { name: 'name', type: TYPES.NVarChar, options: { length: 255, nullable: false }, isIdentity: false, isComputed: false },
+      ]
+      const { knex, client, connection } = createFakeKnexAndConnection({ transacting: true })
+      const strategy = new MssqlBulkInsertStrategy({ inspector: buildInspector(schema) })
+
+      const inserted = await strategy.execute(knex, jsonToStream([{ name: 'a' }, { name: 'b' }]), {
+        table: 'users',
+        objectToDBmapping: { name: 'name' },
+      })
+
+      expect(inserted).toBe(2)
+      expect(connection.close).not.toHaveBeenCalled()
+      expect(client.releaseConnection).toHaveBeenCalledWith(connection)
     })
   })
 

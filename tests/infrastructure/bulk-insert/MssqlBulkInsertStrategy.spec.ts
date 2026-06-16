@@ -2,7 +2,7 @@ import knex, { Knex } from 'knex'
 import { PassThrough } from 'stream'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { MssqlBulkInsertStrategy, MssqlSchemaInspector } from '../../../src/knex'
+import { KnexConnectionScope, MssqlBulkInsertStrategy, MssqlSchemaInspector } from '../../../src/knex'
 
 /**
  * Integration tests for the MSSQL bulk-insert pipeline. Requires the
@@ -243,6 +243,73 @@ describeIfMssql('MssqlBulkInsertStrategy (integration)', () => {
       // message is propagated (we don't dictate exact wording, just that
       // the table name appears).
       await expect(inspector.inspect('does_not_exist_xyz')).rejects.toThrow()
+    })
+  })
+
+  describe('transaction participation', () => {
+    // KnexConnectionScope.transaction() runs its callback with a single
+    // transaction-pinned connection that getConnection() exposes — exactly what
+    // a repository feeds the strategy. These tests prove the TDS BulkLoad runs
+    // *inside* that transaction (committed/rolled back atomically with it),
+    // refuting the assumption that it auto-commits on a separate pool connection.
+    const mapping = {
+      name: 'name',
+      price: 'price',
+      created_at: 'created_at',
+      is_active: 'is_active',
+      description: 'description',
+      metadata: 'metadata',
+    }
+
+    const row = (name: string) => ({
+      name,
+      price: 1,
+      created_at: new Date('2026-01-01T00:00:00Z'),
+      is_active: true,
+      description: null,
+      metadata: null,
+    })
+
+    async function countRows(): Promise<number> {
+      const result = await db('bulk_test').count<{ c: number }[]>('* as c').first()
+      return Number(result?.c ?? 0)
+    }
+
+    it('commits bulk-loaded rows with the surrounding transaction', async () => {
+      const scope = new KnexConnectionScope(db)
+      const strategy = new MssqlBulkInsertStrategy()
+
+      await scope.transaction(async () => {
+        const inserted = await strategy.execute(scope.getConnection(), jsonToStream([row('A'), row('B')]), {
+          table: 'bulk_test',
+          objectToDBmapping: mapping,
+        })
+        expect(inserted).toBe(2)
+      })
+
+      expect(await countRows()).toBe(2)
+    })
+
+    it('rolls back bulk-loaded rows when the surrounding transaction fails', async () => {
+      const scope = new KnexConnectionScope(db)
+      const strategy = new MssqlBulkInsertStrategy()
+
+      await expect(
+        scope.transaction(async () => {
+          // BulkLoad reports success here...
+          const inserted = await strategy.execute(scope.getConnection(), jsonToStream([row('A'), row('B')]), {
+            table: 'bulk_test',
+            objectToDBmapping: mapping,
+          })
+          expect(inserted).toBe(2)
+          // ...but the transaction then fails, so the rows must not persist.
+          throw new Error('force rollback')
+        })
+      ).rejects.toThrow('force rollback')
+
+      // Proves the bulk-loaded rows were part of the transaction, not committed
+      // independently on a separate connection.
+      expect(await countRows()).toBe(0)
     })
   })
 })

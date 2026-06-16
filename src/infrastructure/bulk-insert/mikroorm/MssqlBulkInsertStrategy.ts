@@ -40,6 +40,10 @@ export interface IMssqlBulkInsertStrategyOptions {
    * Invoked when BulkLoad rejects, before the tedious connection is closed
    * and released. Use this to plug in app-specific "poison" tracking so the
    * pool doesn't hand the now-broken connection back to the next caller.
+   *
+   * Not invoked when the BulkLoad runs on a connection pinned to a
+   * `KnexConnectionScope` transaction: that connection is owned by the
+   * transaction and is neither closed nor poisoned (its rollback handles it).
    */
   onError?: (connection: unknown, err: unknown) => void
 }
@@ -84,11 +88,21 @@ interface ITediousConnection {
  * call in an explicit `BEGIN/COMMIT` — that would only add a round-trip
  * without changing semantics.
  *
+ * Transactions: when invoked through a repository running inside a
+ * `KnexConnectionScope` transaction, knex hands the strategy the transaction's
+ * pinned connection (its `acquireConnection()` returns that single connection
+ * and `releaseConnection()` is a no-op). The BulkLoad therefore runs on the
+ * transaction's own connection/session and is committed or rolled back atomically
+ * with the rest of the transaction.
+ *
  * Caveat: when BulkLoad rejects, the tedious connection may be left in an
  * indeterminate TDS state (mid-token-stream on socket reset). To avoid
  * handing a poisoned connection back to the pool, the strategy closes the
  * connection on error before releasing it; the pool's validator then drops
- * the closed entry on next acquire.
+ * the closed entry on next acquire. The one exception is the transaction-pinned
+ * connection above: it belongs to the surrounding transaction, so the strategy
+ * leaves it open on error and lets the transaction's rollback clean up — closing
+ * it would tear down the transaction's connection and break knex's own rollback.
  */
 export class MssqlBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
   private readonly schemaCache = new Map<string, IMssqlColumnDescriptor[]>()
@@ -128,6 +142,13 @@ export class MssqlBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
     const client = knex.client as unknown as Knex.Client
     const connection = (await client.acquireConnection()) as ITediousConnection
 
+    // A transaction-pinned connection belongs to the surrounding
+    // `KnexConnectionScope` transaction, not to us: poisoning (closing) it on
+    // error would tear down the transaction's connection and make knex's own
+    // rollback fail with a confusing secondary error. The rollback already
+    // undoes a partially-applied BulkLoad, so we leave the connection alone.
+    const pinnedToTransaction = isTransactionClient(client)
+
     let bulkLoadError: unknown = null
     try {
       this.assertConnectionUsable(connection)
@@ -136,9 +157,10 @@ export class MssqlBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
       bulkLoadError = err
       throw err
     } finally {
-      if (bulkLoadError !== null) {
+      if (bulkLoadError !== null && !pinnedToTransaction) {
         this.poisonConnection(connection, bulkLoadError)
       }
+      // No-op for a transaction client; returns a pooled connection to the pool.
       await client.releaseConnection(connection)
     }
   }
@@ -286,6 +308,18 @@ export class MssqlBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
       // Connection may already be torn down — silent.
     }
   }
+}
+
+/**
+ * True when `client` is a knex transaction client — the object exposed as
+ * `trx.client` inside a transaction. Knex sets `transacting = true` only on that
+ * client (via `makeTxClient`) and never on a base/pool client, so `=== true`
+ * cannot false-positive on a pooled connection. On a transaction client the
+ * acquired connection is pinned to the surrounding transaction and must not be
+ * closed by the strategy; see `execute()` for the rationale.
+ */
+function isTransactionClient(client: Knex.Client): boolean {
+  return (client as unknown as { transacting?: boolean }).transacting === true
 }
 
 function normaliseTableKey(table: string): string {
