@@ -452,7 +452,22 @@ Reads the dialect from `knex.client.config.client`:
 | `mssql` / `tedious` | `MssqlBulkInsertStrategy` | TDS `BulkLoad` (BCP); schema auto-discovered |
 | anything else | `FallbackBulkInsertStrategy` | Batched `INSERT` (default batch 1000) |
 
-`KnexRepository.bulkInsert()` resolves automatically; override via `IKnexRepositoryConfig.bulkInsertStrategy`. The strategies acquire raw `pg.Client` / `tedious.Connection` directly from `knex.client.acquireConnection()` and participate in `KnexConnectionScope` transactions when the scope holds the same knex transaction.
+`KnexRepository.bulkInsert()` resolves automatically; override via `IKnexRepositoryConfig.bulkInsertStrategy`. The strategies acquire the raw `pg.Client` / `tedious.Connection` directly from `knex.client.acquireConnection()`.
+
+#### Transaction semantics (Knex side)
+
+Inside `scope.transaction()`, knex hands the strategy the transaction's **pinned** connection (its `acquireConnection()` returns that single connection; `releaseConnection()` is a no-op). The `COPY` / `BulkLoad` therefore runs on the transaction's own session and is **committed or rolled back atomically** with the rest of the transaction — there is no separate auto-committing connection. This makes "snapshot header + bulk rows in one atomic unit" a pure-toolkit operation:
+
+```ts
+await scope.transaction(async () => {
+  await headerRepo.insert(snapshotHeader)  // normal INSERT on the trx connection
+  await rowRepo.bulkInsert(rowStream)      // COPY / BulkLoad on the SAME trx connection
+})                                         // both commit together; throw → both roll back
+```
+
+> **Caveat — one connection per transaction.** A transaction pins a single connection, so do **not** run `bulkInsert()` concurrently with other repository calls in the same `scope.transaction()` (e.g. inside `Promise.all([...])`) — they would interleave on one connection and corrupt the wire protocol. Await each operation in sequence.
+>
+> **MSSQL error handling.** When a `BulkLoad` fails *outside* a transaction, the strategy closes the (possibly wire-desynced) tedious connection so the pool drops it. *Inside* a transaction it leaves the connection open and lets the transaction's rollback clean up — closing it would break knex's own rollback.
 
 #### MikroRepository — `resolveMikroBulkInsertStrategy(deps)`
 

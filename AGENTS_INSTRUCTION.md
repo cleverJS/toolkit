@@ -243,6 +243,8 @@ function resolveBulkInsertStrategy(knex: Knex): IBulkInsertStrategy<Knex>
 
 `KnexRepository.bulkInsert()` resolves automatically; override via `IKnexRepositoryConfig.bulkInsertStrategy`.
 
+**Transaction semantics** — inside `scope.transaction()` knex hands the strategy the transaction's *pinned* connection (`acquireConnection()` returns that single connection; `releaseConnection()` is a no-op), so `COPY` / `BulkLoad` run on the transaction's own session and commit/roll back **atomically** with it — there is no separate auto-committing connection. Caveat: a transaction pins one connection, so never run `bulkInsert()` concurrently with other repo calls in the same transaction (await sequentially) — concurrent use corrupts the wire protocol. MSSQL: a failed `BulkLoad` closes (poisons) a *pooled* connection so the pool drops it, but a *transaction-pinned* connection is left open for the transaction's rollback to clean up.
+
 ### 3.2 MikroRepository side (`IMikroBulkInsertStrategy`)
 
 MikroORM v7's Kysely manages its own connection pool with hash-private fields — there is no `em.getKnex()` to extract a usable raw connection. Streaming COPY / BulkLoad therefore need a caller-managed driver resource (a `pg.Pool` or a tedious connection factory), typically the same pool MikroORM was initialised with.
