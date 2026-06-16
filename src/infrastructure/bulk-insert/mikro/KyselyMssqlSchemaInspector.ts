@@ -1,7 +1,7 @@
 import { Kysely, sql } from 'kysely'
 
-import { IMssqlColumnDescriptor, IMssqlSchemaInspector, ITediousColumnOptions } from '../mikroorm/mssql/MssqlSchemaInspector'
-import { resolveTediousDataType } from '../mikroorm/mssql/sqlTypeMap'
+import { IMssqlColumnDescriptor, IMssqlSchemaInspector, ITediousColumnOptions } from '../knex/mssql/MssqlSchemaInspector'
+import { resolveTediousDataType } from '../knex/mssql/sqlTypeMap'
 
 interface IInfoSchemaRow {
   column_name: string

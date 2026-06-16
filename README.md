@@ -98,7 +98,7 @@ src/
 │   └── bulk-insert/                # Bulk insert strategies
 │       ├── IBulkInsertStrategy.ts          # KnexRepository side
 │       ├── resolveBulkInsertStrategy.ts
-│       ├── mikroorm/                       # knex-based (used by KnexRepository)
+│       ├── knex/                           # used by KnexRepository
 │       │   ├── PostgresBulkInsertStrategy.ts
 │       │   ├── FallbackBulkInsertStrategy.ts
 │       │   ├── MssqlBulkInsertStrategy.ts

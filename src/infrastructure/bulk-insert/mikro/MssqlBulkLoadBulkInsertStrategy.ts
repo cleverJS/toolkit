@@ -2,7 +2,7 @@ import { Kysely } from 'kysely'
 import { PassThrough, Transform } from 'stream'
 
 import { peekAndReplayStream } from '../../../utils/helpers/streams'
-import { IMssqlColumnDescriptor, IMssqlSchemaInspector } from '../mikroorm/mssql/MssqlSchemaInspector'
+import { IMssqlColumnDescriptor, IMssqlSchemaInspector } from '../knex/mssql/MssqlSchemaInspector'
 
 import { IMikroBulkInsertContext, IMikroBulkInsertStrategy } from './IMikroBulkInsertStrategy'
 import { KyselyChunkedBulkInsertStrategy } from './KyselyChunkedBulkInsertStrategy'

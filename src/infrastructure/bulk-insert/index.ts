@@ -1,9 +1,9 @@
 export { IBulkInsertStrategy, IBulkInsertOptions } from './IBulkInsertStrategy'
-export { PostgresBulkInsertStrategy } from './mikroorm/PostgresBulkInsertStrategy'
-export { FallbackBulkInsertStrategy } from './mikroorm/FallbackBulkInsertStrategy'
-export { MssqlBulkInsertStrategy, IMssqlBulkInsertStrategyOptions } from './mikroorm/MssqlBulkInsertStrategy'
-export { MssqlSchemaInspector, IMssqlSchemaInspector, IMssqlColumnDescriptor, ITediousColumnOptions } from './mikroorm/mssql/MssqlSchemaInspector'
-export { resolveTediousDataType, TediousDataType } from './mikroorm/mssql/sqlTypeMap'
+export { PostgresBulkInsertStrategy } from './knex/PostgresBulkInsertStrategy'
+export { FallbackBulkInsertStrategy } from './knex/FallbackBulkInsertStrategy'
+export { MssqlBulkInsertStrategy, IMssqlBulkInsertStrategyOptions } from './knex/MssqlBulkInsertStrategy'
+export { MssqlSchemaInspector, IMssqlSchemaInspector, IMssqlColumnDescriptor, ITediousColumnOptions } from './knex/mssql/MssqlSchemaInspector'
+export { resolveTediousDataType, TediousDataType } from './knex/mssql/sqlTypeMap'
 export { resolveBulkInsertStrategy } from './resolveBulkInsertStrategy'
 
 // MikroRepository-side strategies (use Kysely + caller-managed driver resources).

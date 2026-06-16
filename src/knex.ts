@@ -4,14 +4,14 @@ export { KnexRepository, IKnexRepositoryConfig } from './infrastructure/Knex.rep
 export { KnexConnectionScope } from './infrastructure/scope/KnexConnectionScope'
 
 // Bulk insert strategies for KnexRepository
-export { PostgresBulkInsertStrategy } from './infrastructure/bulk-insert/mikroorm/PostgresBulkInsertStrategy'
-export { FallbackBulkInsertStrategy } from './infrastructure/bulk-insert/mikroorm/FallbackBulkInsertStrategy'
-export { MssqlBulkInsertStrategy, IMssqlBulkInsertStrategyOptions } from './infrastructure/bulk-insert/mikroorm/MssqlBulkInsertStrategy'
+export { PostgresBulkInsertStrategy } from './infrastructure/bulk-insert/knex/PostgresBulkInsertStrategy'
+export { FallbackBulkInsertStrategy } from './infrastructure/bulk-insert/knex/FallbackBulkInsertStrategy'
+export { MssqlBulkInsertStrategy, IMssqlBulkInsertStrategyOptions } from './infrastructure/bulk-insert/knex/MssqlBulkInsertStrategy'
 export {
   MssqlSchemaInspector,
   IMssqlSchemaInspector,
   IMssqlColumnDescriptor,
   ITediousColumnOptions,
-} from './infrastructure/bulk-insert/mikroorm/mssql/MssqlSchemaInspector'
-export { resolveTediousDataType, TediousDataType } from './infrastructure/bulk-insert/mikroorm/mssql/sqlTypeMap'
+} from './infrastructure/bulk-insert/knex/mssql/MssqlSchemaInspector'
+export { resolveTediousDataType, TediousDataType } from './infrastructure/bulk-insert/knex/mssql/sqlTypeMap'
 export { resolveBulkInsertStrategy } from './infrastructure/bulk-insert/resolveBulkInsertStrategy'

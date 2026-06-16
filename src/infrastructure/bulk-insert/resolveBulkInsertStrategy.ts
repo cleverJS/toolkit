@@ -1,9 +1,9 @@
 import { Knex } from 'knex'
 
 import { IBulkInsertStrategy } from './IBulkInsertStrategy'
-import { FallbackBulkInsertStrategy } from './mikroorm/FallbackBulkInsertStrategy'
-import { MssqlBulkInsertStrategy } from './mikroorm/MssqlBulkInsertStrategy'
-import { PostgresBulkInsertStrategy } from './mikroorm/PostgresBulkInsertStrategy'
+import { FallbackBulkInsertStrategy } from './knex/FallbackBulkInsertStrategy'
+import { MssqlBulkInsertStrategy } from './knex/MssqlBulkInsertStrategy'
+import { PostgresBulkInsertStrategy } from './knex/PostgresBulkInsertStrategy'
 
 export function resolveBulkInsertStrategy(knex: Knex): IBulkInsertStrategy<Knex> {
   const dialect = getKnexDialect(knex)
