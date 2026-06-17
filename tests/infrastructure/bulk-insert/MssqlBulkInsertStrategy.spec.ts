@@ -54,11 +54,31 @@ describeIfMssql('MssqlBulkInsertStrategy (integration)', () => {
       table.boolean('is_active').notNullable()
       table.text('metadata').nullable()
     })
+
+    // DECIMAL(18,2) round-trip fixture (guards bug #3 — scale truncation).
+    await db.schema.dropTableIfExists('decimal_test')
+    await db.schema.createTable('decimal_test', (table) => {
+      table.increments('id').primary()
+      table.decimal('amount', 18, 2).notNullable()
+    })
+
+    // Non-dbo schema fixture (guards bug #2 — columnInfo() defaulting to dbo).
+    // OBJECT_ID is schema-aware, so a table in [app_test] must inspect/load fine.
+    await db.raw("IF SCHEMA_ID('app_test') IS NULL EXEC('CREATE SCHEMA app_test')")
+    await db.schema.dropTableIfExists('app_test.scoped_table')
+    await db.schema.withSchema('app_test').createTable('scoped_table', (table) => {
+      table.increments('id').primary()
+      table.string('label', 255).notNullable()
+      table.decimal('rate', 18, 2).nullable()
+    })
   })
 
   afterAll(async () => {
     if (db) {
       await db.schema.dropTableIfExists('bulk_test')
+      await db.schema.dropTableIfExists('decimal_test')
+      await db.schema.dropTableIfExists('app_test.scoped_table')
+      await db.raw("IF SCHEMA_ID('app_test') IS NOT NULL EXEC('DROP SCHEMA app_test')")
       await db.destroy()
     }
   })
@@ -310,6 +330,112 @@ describeIfMssql('MssqlBulkInsertStrategy (integration)', () => {
       // Proves the bulk-loaded rows were part of the transaction, not committed
       // independently on a separate connection.
       expect(await countRows()).toBe(0)
+    })
+
+    it('inspects a table on the transaction-pinned connection without EINVALIDSTATE', async () => {
+      // THE regression test for bug #1. Inside KnexConnectionScope.transaction(),
+      // getConnection() returns the transaction's single pinned tedious
+      // connection. The OLD inspector ran two concurrent queries (columnInfo +
+      // a flags query under Promise.all); the second request on that one pinned
+      // connection threw EINVALIDSTATE ("Requests can only be made in the
+      // LoggedIn state, not the SentClientRequest state").
+      //
+      // MssqlSchemaInspector has NO cache (unlike the strategy), so this runs
+      // the live single-query inspect() on the pinned connection every time —
+      // directly reproducing the real consumer (KnexRepository.bulkInsert builds
+      // a fresh, cold-cache strategy per call). It must simply resolve.
+      const scope = new KnexConnectionScope(db)
+
+      await scope.transaction(async () => {
+        const inspector = new MssqlSchemaInspector(scope.getConnection())
+        const schema = await inspector.inspect('bulk_test')
+
+        const byName = new Map(schema.map((c) => [c.name.toLowerCase(), c]))
+        expect(byName.get('id')?.isIdentity).toBe(true)
+        expect(byName.get('name')?.isIdentity).toBe(false)
+        expect(schema.length).toBeGreaterThan(0)
+      })
+    })
+
+    it('bulk-inserts inside a transaction with a cold-cache strategy (inspector runs on the pinned connection)', async () => {
+      // Mirrors KnexRepository.bulkInsert: a FRESH strategy per call means an
+      // empty schema cache, so the inspector runs *inside* the transaction on
+      // the pinned connection. cacheSchema: false makes the cold-cache explicit
+      // and removes the trap that hides bug #1 when a strategy instance is
+      // reused (its warmed cache would skip the inspector inside the tx).
+      const scope = new KnexConnectionScope(db)
+      const strategy = new MssqlBulkInsertStrategy({ cacheSchema: false })
+
+      await scope.transaction(async () => {
+        const inserted = await strategy.execute(scope.getConnection(), jsonToStream([row('A'), row('B'), row('C')]), {
+          table: 'bulk_test',
+          objectToDBmapping: mapping,
+        })
+        expect(inserted).toBe(3)
+      })
+
+      expect(await countRows()).toBe(3)
+    })
+  })
+
+  describe('non-dbo schema (guards bug #2)', () => {
+    // knex columnInfo() defaulted the schema to dbo and returned ZERO columns
+    // for a table in another schema, producing "no insertable columns". The
+    // OBJECT_ID-based inspector resolves the schema-qualified name correctly.
+
+    it('inspects a table in a non-dbo schema', async () => {
+      const inspector = new MssqlSchemaInspector(db)
+
+      const schema = await inspector.inspect('app_test.scoped_table')
+
+      const names = schema.map((c) => c.name.toLowerCase()).sort()
+      expect(names).toEqual(['id', 'label', 'rate'])
+      const byName = new Map(schema.map((c) => [c.name.toLowerCase(), c]))
+      expect(byName.get('id')?.isIdentity).toBe(true)
+    })
+
+    it('bulk-inserts into a table in a non-dbo schema', async () => {
+      const strategy = new MssqlBulkInsertStrategy()
+
+      const inserted = await strategy.execute(db, jsonToStream([{ label: 'one' }, { label: 'two' }]), {
+        table: 'app_test.scoped_table',
+        objectToDBmapping: { label: 'label' },
+      })
+
+      expect(inserted).toBe(2)
+      const stored = await db.withSchema('app_test').from('scoped_table').select('label').orderBy('id')
+      expect(stored.map((r) => r.label)).toEqual(['one', 'two'])
+    })
+  })
+
+  describe('DECIMAL scale round-trip (guards bug #3)', () => {
+    // composeOptions() now sets precision/scale for decimal/numeric. Before the
+    // fix they were unset, so tedious BulkLoad defaulted scale to 0 and
+    // truncated the fraction (DECIMAL(18,2) values stored as integers).
+
+    it('preserves 2-dp scale through a bulk insert', async () => {
+      // Cold-cache, transaction-pinned: the harshest path (inspector runs on the
+      // pinned connection) and still must keep the fraction.
+      const scope = new KnexConnectionScope(db)
+      const strategy = new MssqlBulkInsertStrategy({ cacheSchema: false })
+
+      const amounts = [299.99, 1000, 0.05, 12345.67]
+
+      await scope.transaction(async () => {
+        const inserted = await strategy.execute(
+          scope.getConnection(),
+          jsonToStream(amounts.map((amount) => ({ amount }))),
+          { table: 'decimal_test', objectToDBmapping: { amount: 'amount' } }
+        )
+        expect(inserted).toBe(amounts.length)
+      })
+
+      const stored = await db('decimal_test').select('amount').orderBy('id')
+      // knex returns DECIMAL as a string from the mssql driver; normalise to
+      // Number so the assertion reads in decimal terms. Before the fix these
+      // came back as 299, 1000, 0, 12345 (scale truncated to 0).
+      const persisted = stored.map((r) => Number(r.amount))
+      expect(persisted).toEqual([299.99, 1000, 0.05, 12345.67])
     })
   })
 })
