@@ -12,6 +12,7 @@ import { PropertySchema } from '../utils/types/types'
 
 import { IMikroBulkInsertStrategy, KyselyChunkedBulkInsertStrategy } from './bulk-insert/mikro'
 import { IMapper, IRepository, IRepositoryHooks } from './IRepository'
+import { buildPrimaryKeyCondition, TPrimaryKeyPayload } from './primary-key'
 import { IConnectionScope } from './scope'
 import { IFindAll, IFindAllWithSelect } from './types'
 
@@ -67,6 +68,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     return this.repository.nativeDelete(filter)
   }
 
+  public async deleteById(id: TPrimaryKeyPayload): Promise<number> {
+    return this.delete(buildPrimaryKeyCondition(this.primary, id))
+  }
+
   public async findAll(payload: IFindAll = {}): Promise<DomainEntity[]> {
     const { condition, paginator, sort } = payload
 
@@ -109,6 +114,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     return items.length ? items[0] : null
   }
 
+  public async findById(id: TPrimaryKeyPayload): Promise<DomainEntity | null> {
+    return this.findOne(buildPrimaryKeyCondition(this.primary, id))
+  }
+
   public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
     const processed = this.config.hooks?.beforeInsert?.(data as DomainEntity) ?? data
     const entity = this.mapper.toEntity(processed as DomainEntity)
@@ -146,6 +155,10 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     await this.em.flush()
 
     return this.mapper.toDomain(item)
+  }
+
+  public async updateById(id: TPrimaryKeyPayload, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
+    return this.updateOne(buildPrimaryKeyCondition(this.primary, id), data)
   }
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {

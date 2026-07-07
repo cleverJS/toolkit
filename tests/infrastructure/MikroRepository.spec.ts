@@ -549,6 +549,66 @@ describe('MikroRepository', () => {
     })
   })
 
+  describe('findById / updateById / deleteById', () => {
+    const userData: Omit<User, 'id'> = {
+      email: 'byid@example.com',
+      name: 'ById User',
+      age: 33,
+      isActive: true,
+      createdAt: new Date('2024-01-01'),
+    }
+
+    it('should find an entity by scalar primary key', async () => {
+      await repository.insert(userData)
+
+      const found = await repository.findById('byid@example.com')
+
+      expect(found).not.toBeNull()
+      expect(found!.name).toBe('ById User')
+    })
+
+    it('should find by autoincrement id and return null on a miss', async () => {
+      const job = await repositoryJob.insert({ name: 'Job 1', createdAt: new Date() })
+
+      const found = await repositoryJob.findById(job.id!)
+      expect(found!.name).toBe('Job 1')
+
+      const missing = await repositoryJob.findById(999999)
+      expect(missing).toBeNull()
+    })
+
+    it('should update an entity by primary key', async () => {
+      await repository.insert(userData)
+
+      const updated = await repository.updateById('byid@example.com', { name: 'Renamed' })
+
+      expect(updated.name).toBe('Renamed')
+      expect(updated.age).toBe(33)
+    })
+
+    it('should throw from updateById when the entity does not exist', async () => {
+      await expect(repository.updateById('missing@example.com', { name: 'x' })).rejects.toThrow('Entity to update not found')
+    })
+
+    it('should delete only the targeted entity and report the count', async () => {
+      await repository.insert(userData)
+      await repository.insert({ ...userData, email: 'other@example.com' })
+
+      const deleted = await repository.deleteById('byid@example.com')
+
+      expect(deleted).toBe(1)
+      expect(await repository.count()).toBe(1)
+      expect(await repository.deleteById('byid@example.com')).toBe(0)
+    })
+
+    it('should throw on a nullish id instead of matching all rows', async () => {
+      await repository.insert(userData)
+
+      await expect(repository.deleteById(undefined as never)).rejects.toThrow('must not be null or undefined')
+      expect(await repository.count()).toBe(1)
+    })
+  })
+
   describe('transaction', () => {
     it('should commit on success', async () => {
       await scope.transaction(async () => {
