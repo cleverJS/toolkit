@@ -378,4 +378,55 @@ describe('PostgreSQL Bulk Insert', () => {
       expect(total).toBe(0)
     })
   })
+
+  // Regression suite: manual .pipe() chains used to leave source errors
+  // unhandled (crashing the process), and COPY CSV serialized '' as NULL.
+  describe('stream error propagation & CSV escaping (regression)', () => {
+    function erroringStream<T>(items: T[], error: Error): PassThrough & AsyncIterable<T> {
+      const stream = new PassThrough({ objectMode: true })
+      items.forEach((item) => stream.write(item))
+      setImmediate(() => stream.destroy(error))
+      return stream as PassThrough & AsyncIterable<T>
+    }
+
+    it('should reject (not crash) when the source stream errors mid-flow on the COPY path', async () => {
+      const stream = erroringStream<Product>(
+        [{ name: 'First', price: 1, createdAt: new Date(), isActive: true }],
+        new Error('producer failed')
+      )
+
+      await expect(repository.bulkInsert(stream)).rejects.toThrow('producer failed')
+
+      // COPY aborted atomically and the pool connection was released.
+      expect(await repository.count()).toBe(0)
+    })
+
+    it('should reject (not crash or hang) when a row fails CSV serialization', async () => {
+      const circular: Record<string, any> = {}
+      circular.self = circular
+
+      const stream = jsonToStream<Product>([
+        { name: 'Good', price: 1, createdAt: new Date(), isActive: true, metadata: { ok: true } },
+        { name: 'Bad', price: 2, createdAt: new Date(), isActive: true, metadata: circular },
+      ])
+
+      await expect(repository.bulkInsert(stream)).rejects.toThrow(/circular/i)
+
+      expect(await repository.count()).toBe(0)
+    })
+
+    it('should keep empty strings as empty strings, not NULL', async () => {
+      const stream = jsonToStream<Product>([
+        { name: 'Empty description', price: 1, createdAt: new Date(), isActive: true, description: '' },
+        { name: 'No description', price: 2, createdAt: new Date(), isActive: true },
+      ])
+
+      const inserted = await repository.bulkInsert(stream)
+      expect(inserted).toBe(2)
+
+      const rows = await repository.findAll({ sort: { price: 'asc' } })
+      expect(rows[0].description).toBe('')
+      expect(rows[1].description).toBeNull()
+    })
+  })
 })

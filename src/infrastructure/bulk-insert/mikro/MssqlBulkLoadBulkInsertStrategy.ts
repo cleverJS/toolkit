@@ -1,5 +1,5 @@
 import { Kysely } from 'kysely'
-import { PassThrough, Transform } from 'stream'
+import { PassThrough, pipeline, Transform } from 'stream'
 
 import { peekAndReplayStream } from '../../../utils/helpers/streams'
 import { IMssqlColumnDescriptor, IMssqlSchemaInspector } from '../knex/mssql/MssqlSchemaInspector'
@@ -234,11 +234,12 @@ export class MssqlBulkLoadBulkInsertStrategy implements IMikroBulkInsertStrategy
       const settleReject = (err: unknown): void => {
         if (settled) return
         settled = true
-        rowStream.destroy(err instanceof Error ? err : new Error(String(err)))
+        const error = err instanceof Error ? err : new Error(String(err))
+        rowStream.destroy(error)
         if (typeof stream.destroy === 'function') {
           stream.destroy(err instanceof Error ? err : undefined)
         }
-        reject(err as Error)
+        reject(error)
       }
 
       const settleResolve = (rowCount: number): void => {
@@ -292,7 +293,7 @@ function buildRowStream(
   stream: PassThrough & AsyncIterable<Record<string, unknown>>,
   objectToDBmapping: Record<string, string>,
   columns: IMssqlColumnDescriptor[]
-): PassThrough {
+): Transform {
   // Build canonical (case-correct) lookup from "wanted DB column" → descriptor so emitted
   // row keys match what BulkLoad expects.
   const canonicalByLower = new Map(columns.map((c) => [c.name.toLowerCase(), c.name]))
@@ -327,7 +328,12 @@ function buildRowStream(
     },
   })
 
-  return stream.pipe(transformer)
+  // pipeline (unlike .pipe) propagates source errors to the transformer, whose
+  // 'error' listener in #runBulkLoad settles the BulkLoad promise — otherwise a
+  // source failure is an unhandled 'error' event and crashes the process.
+  return pipeline(stream, transformer, () => {
+    // Errors surface via the transformer's 'error' event; nothing to do here.
+  })
 }
 
 function serialiseValue(value: unknown): unknown {

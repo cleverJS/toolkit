@@ -1,5 +1,6 @@
 import { from as copyFrom } from 'pg-copy-streams'
 import { PassThrough, Transform } from 'stream'
+import { pipeline } from 'stream/promises'
 
 import { IMikroBulkInsertContext, IMikroBulkInsertStrategy } from './IMikroBulkInsertStrategy'
 import { KyselyChunkedBulkInsertStrategy } from './KyselyChunkedBulkInsertStrategy'
@@ -97,7 +98,7 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
     try {
       // pg-copy-streams expects a Writable that pg.Client.query understands —
       // typed loosely because we treat `pg` as an optional peer dep.
-      const copyStream = client.query(copyFrom(sql) as unknown as NodeJS.WritableStream)
+      const copyStream = client.query(copyFrom(sql))
 
       const counting = new Transform({
         objectMode: true,
@@ -107,14 +108,11 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
         },
       })
 
-      PostgresCopyBulkInsertStrategy.#transformToTabRow(stream, objectToDBmapping)
-        .pipe(counting)
-        .pipe(copyStream as unknown as PassThrough)
-
-      await new Promise<void>((resolve, reject) => {
-        copyStream.on('finish', () => resolve())
-        copyStream.on('error', (err: Error) => reject(err))
-      })
+      // pipeline (unlike .pipe chains) rejects on a failure in ANY stage —
+      // source, transform, or COPY sink — and destroys the whole chain, so
+      // the connection is always released and callers see the error instead
+      // of the process crashing on an unhandled 'error' event.
+      await pipeline(stream, PostgresCopyBulkInsertStrategy.#transformToTabRow(objectToDBmapping), counting, copyStream as unknown as PassThrough)
 
       return rowCount
     } finally {
@@ -126,7 +124,7 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
     }
   }
 
-  static #transformToTabRow(stream: PassThrough & AsyncIterable<Record<string, unknown>>, objectToDBmapping: Record<string, string>): PassThrough {
+  static #transformToTabRow(objectToDBmapping: Record<string, string>): Transform {
     const objectKeys = Object.keys(objectToDBmapping)
 
     const transformer = new Transform({
@@ -150,7 +148,7 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
       },
     })
 
-    return stream.pipe(transformer)
+    return transformer
   }
 
   static #serializeValue(value: unknown): string {
@@ -169,11 +167,15 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
     let strValue: string
     if (typeof value === 'string') {
       strValue = value
-    } else if (typeof value === 'symbol') {
-      strValue = value.toString()
     } else {
-      // number | boolean | bigint — each has a well-defined string conversion.
-      strValue = String(value as number | boolean | bigint)
+      // number | boolean | bigint | symbol — each has a well-defined toString().
+      strValue = (value as number | boolean | bigint | symbol).toString()
+    }
+
+    // COPY CSV treats an unquoted empty field as NULL — quote it so an empty
+    // string stays an empty string instead of becoming NULL.
+    if (strValue === '') {
+      return '""'
     }
 
     if (strValue.includes('\t') || strValue.includes('\n') || strValue.includes('"') || strValue.includes('\r')) {

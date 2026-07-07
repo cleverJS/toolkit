@@ -1,6 +1,6 @@
 import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverjs/condition-builder'
 import { Knex } from 'knex'
-import { PassThrough, Transform } from 'stream'
+import { PassThrough, pipeline, Transform } from 'stream'
 
 import { isPlainObject, removeUndefined } from '../utils/helpers/object'
 import { peekAndReplayStream } from '../utils/helpers/streams'
@@ -191,7 +191,12 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
     this.#applyCondition(qb, condition)
 
     const transformToDomain = this.#createDomainTransform()
-    return qb.stream().pipe(transformToDomain) as PassThrough & AsyncIterable<R>
+    // pipeline (unlike .pipe) propagates source errors to the destination and
+    // destroys both streams, so consumers see the failure instead of the
+    // process crashing on an unhandled 'error' event.
+    return pipeline(qb.stream(), transformToDomain, () => {
+      // Errors surface on the destroyed destination stream; nothing to do here.
+    }) as PassThrough & AsyncIterable<R>
   }
 
   public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number> {
@@ -340,6 +345,8 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
       },
     })
 
-    return stream.pipe(transform) as PassThrough & AsyncIterable<DBEntity>
+    return pipeline(stream, transform, () => {
+      // Errors surface on the destroyed destination stream; nothing to do here.
+    }) as PassThrough & AsyncIterable<DBEntity>
   }
 }

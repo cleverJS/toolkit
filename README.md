@@ -468,6 +468,10 @@ await scope.transaction(async () => {
 > **Caveat — one connection per transaction.** A transaction pins a single connection, so do **not** run `bulkInsert()` concurrently with other repository calls in the same `scope.transaction()` (e.g. inside `Promise.all([...])`) — they would interleave on one connection and corrupt the wire protocol. Await each operation in sequence.
 >
 > **MSSQL error handling.** When a `BulkLoad` fails *outside* a transaction, the strategy closes the (possibly wire-desynced) tedious connection so the pool drops it. *Inside* a transaction it leaves the connection open and lets the transaction's rollback clean up — closing it would break knex's own rollback.
+>
+> **Stream error semantics.** If the source stream errors mid-flow, or a row fails serialization (e.g. a circular reference in a JSON column), `bulkInsert()` rejects with that error and the acquired connection is released — nothing hangs and no unhandled `'error'` event escapes. Postgres `COPY` aborts atomically (no partial rows).
+>
+> **Empty strings (Postgres COPY).** The CSV serializer quotes empty strings, so `''` round-trips as `''` — only `null`/`undefined` become SQL `NULL`.
 
 #### MikroRepository — `resolveMikroBulkInsertStrategy(deps)`
 
@@ -560,6 +564,8 @@ import { listWithPagination, Paginator } from '@cleverjs/toolkit'
 const paginator = new Paginator({ page: 2, perPage: 20 })
 const { items, total } = await listWithPagination(userRepo, paginator, condition, { name: 'asc' })
 ```
+
+The `count` query is skipped when the paginator already carries a total (from a previous call) or when `skipTotal` is set. A cached total is returned and preserved; `total` is `-1` only when it is genuinely unknown (`skipTotal`).
 
 > **Important:** `sort` is **required** when using a paginator with `limit > 1`. Without deterministic ordering, paginated results are undefined. Both `findAll` and `findPartial` throw if a paginator is provided without sort. (`findOne` handles this internally by sorting on the primary key.)
 

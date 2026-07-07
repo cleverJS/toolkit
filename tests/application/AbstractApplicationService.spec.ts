@@ -22,7 +22,7 @@ function mockRepository(overrides: Partial<IRepository<Item>> = {}): IRepository
     bulkInsert: vi.fn(),
     stream: vi.fn(),
     ...overrides,
-  } as IRepository<Item>
+  }
 }
 
 describe('listWithPagination', () => {
@@ -59,7 +59,7 @@ describe('listWithPagination', () => {
     expect(paginator.getTotal()).toBe(42)
   })
 
-  it('should skip count when paginator already has total', async () => {
+  it('should skip count when paginator already has total and return the cached total', async () => {
     const repo = mockRepository({
       findAll: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(999),
@@ -71,7 +71,28 @@ describe('listWithPagination', () => {
     const result = await listWithPagination(repo, paginator)
 
     expect(repo.count).not.toHaveBeenCalled()
-    expect(result.total).toBe(-1)
+    expect(result.total).toBe(50)
+    expect(paginator.getTotal()).toBe(50)
+  })
+
+  // Regression: setTotal(-1) used to run unconditionally, clamping the cached
+  // total to 0 — destroying the cache and forcing a re-count on every call.
+  it('should preserve the cached total across repeated calls with the same paginator', async () => {
+    const count = vi.fn().mockResolvedValue(42)
+    const repo = mockRepository({
+      findAll: vi.fn().mockResolvedValue([]),
+      count,
+    })
+
+    const paginator = new Paginator()
+
+    const first = await listWithPagination(repo, paginator)
+    const second = await listWithPagination(repo, paginator)
+
+    expect(count).toHaveBeenCalledTimes(1)
+    expect(first.total).toBe(42)
+    expect(second.total).toBe(42)
+    expect(paginator.getTotal()).toBe(42)
   })
 
   it('should skip count when skipTotal is true', async () => {

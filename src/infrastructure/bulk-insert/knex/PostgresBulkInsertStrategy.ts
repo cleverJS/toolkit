@@ -2,6 +2,7 @@ import { Knex } from 'knex'
 import { Client } from 'pg'
 import { from } from 'pg-copy-streams'
 import { PassThrough, Transform } from 'stream'
+import { pipeline } from 'stream/promises'
 
 import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'
 
@@ -32,18 +33,17 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
       // Transform stream and count rows
       const countingStream = new Transform({
         objectMode: true,
-        transform(chunk, encoding, callback) {
+        transform(chunk, _encoding, callback) {
           rowCount++
           callback(null, chunk)
         },
       })
 
-      this.transformToTabRow(stream, objectToDBmapping).pipe(countingStream).pipe(copyStream)
-
-      await new Promise<void>((resolve, reject) => {
-        copyStream.on('finish', resolve)
-        copyStream.on('error', reject)
-      })
+      // pipeline (unlike .pipe chains) rejects on a failure in ANY stage —
+      // source, transform, or COPY sink — and destroys the whole chain, so
+      // the connection is always released and callers see the error instead
+      // of the process crashing on an unhandled 'error' event.
+      await pipeline(stream, this.transformToTabRow(objectToDBmapping), countingStream, copyStream)
 
       return rowCount
     } finally {
@@ -51,12 +51,12 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
     }
   }
 
-  private transformToTabRow(stream: PassThrough & AsyncIterable<any>, objectToDBmapping: Record<string, string>): PassThrough {
+  private transformToTabRow(objectToDBmapping: Record<string, string>): Transform {
     const objectKeys = Object.keys(objectToDBmapping)
 
     const transformer = new Transform({
       objectMode: true,
-      transform(chunk: Record<string, number | boolean | string | Date | null>, encoding, callback) {
+      transform(chunk: Record<string, number | boolean | string | Date | null>, _encoding, callback) {
         try {
           const orderedValues = objectKeys.map((key) => {
             let value: number | boolean | string | Date | null = null
@@ -86,6 +86,12 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
             // Convert to string
             const strValue = value.toString()
 
+            // COPY CSV treats an unquoted empty field as NULL — quote it so an
+            // empty string stays an empty string instead of becoming NULL.
+            if (strValue === '') {
+              return '""'
+            }
+
             // For CSV format with tab delimiter, we need to quote fields that contain
             // special characters: tabs, newlines, quotes, or the delimiter itself
             if (strValue.includes('\t') || strValue.includes('\n') || strValue.includes('"') || strValue.includes('\r')) {
@@ -104,6 +110,6 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
       },
     })
 
-    return stream.pipe(transformer)
+    return transformer
   }
 }

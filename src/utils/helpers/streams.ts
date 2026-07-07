@@ -19,11 +19,16 @@ import { PassThrough, Readable } from 'stream'
 export async function peekAndReplayStream<T>(originalStream: Readable): Promise<{ first: T; replayStream: PassThrough }> {
   const outputStream = new PassThrough({ objectMode: true })
 
-  // Temporary error handler to prevent unhandled error crashes during setup
-  const noop = () => {
-    // Intentionally empty - used to suppress unhandled error during setup
+  // Permanent guard listener: if the original stream errors before the caller
+  // attaches a consumer (pipe/pipeline/for-await), the destroy(err) below would
+  // otherwise be an unhandled 'error' event and crash the process. A consumer
+  // attached later still receives the error — Node keeps the destroy error and
+  // rejects async iteration / pipeline with it.
+  const suppressUnhandledError = () => {
+    // Intentionally empty — the error is delivered to the consumer via the
+    // destroyed stream state, not via this listener.
   }
-  outputStream.on('error', noop)
+  outputStream.on('error', suppressUnhandledError)
 
   const cleanup = (err?: Error) => {
     if (!originalStream.destroyed) {
@@ -94,7 +99,6 @@ export async function peekAndReplayStream<T>(originalStream: Readable): Promise<
       }
     })
 
-    outputStream.removeListener('error', noop)
     return { first: firstChunk, replayStream: outputStream }
   } catch (err) {
     cleanup(err as Error)

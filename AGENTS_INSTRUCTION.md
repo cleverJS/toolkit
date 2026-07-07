@@ -395,7 +395,7 @@ async function listWithPagination<DomainEntity>(
 ): Promise<{ items: DomainEntity[]; total: number }>
 ```
 
-Skips `count` call when `paginator.getTotal() > 0` or `paginator.isSkipTotal()`.
+Skips `count` call when `paginator.getTotal() > 0` or `paginator.isSkipTotal()`. When the count is skipped, a total cached on the paginator (from a previous call) is returned and preserved; `-1` is returned only when the total is genuinely unknown (`skipTotal`).
 
 ---
 

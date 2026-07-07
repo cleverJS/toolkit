@@ -70,6 +70,38 @@ describe('peekAndReplayStream', () => {
     await expect(peekAndReplayStream(sourceStream)).rejects.toThrow('Source error')
   })
 
+  // Regression: the replay stream's guard 'error' listener used to be removed
+  // before returning. A source error arriving before the caller attached a
+  // consumer (e.g. while awaiting schema introspection) was then an unhandled
+  // 'error' event — crashing the process. A late consumer must still receive
+  // the error via rejected async iteration.
+  it('should not crash when the source errors before a consumer attaches, and deliver the error to a late consumer', async () => {
+    const sourceStream = new Readable({
+      objectMode: true,
+      read() {
+        this.push('chunk1')
+      },
+    })
+    sourceStream.on('error', () => {})
+
+    const { replayStream } = await peekAndReplayStream<string>(sourceStream)
+
+    // Source errors while no consumer is attached to replayStream.
+    sourceStream.destroy(new Error('Error before consumer attached'))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // Late consumer still observes the failure instead of hanging.
+    const consume = (async () => {
+      const chunks: unknown[] = []
+      for await (const chunk of replayStream) {
+        chunks.push(chunk)
+      }
+      return chunks
+    })()
+
+    await expect(consume).rejects.toThrow('Error before consumer attached')
+  })
+
   it('should propagate errors occurring after the first chunk', async () => {
     const sourceStream = new Readable({
       read(_size) {

@@ -1,19 +1,9 @@
 import { AdapterType, Condition, ConditionAdapterRegistry, KyselyConditionApplier } from '@cleverjs/condition-builder'
-import {
-  BaseEntity,
-  EntityDTO,
-  EntityManager,
-  EntityName,
-  EntityRepository,
-  FilterQuery,
-  FromEntityType,
-  OrderDefinition,
-  RequiredEntityData,
-} from '@mikro-orm/core'
+import { BaseEntity, EntityDTO, EntityManager, EntityName, EntityRepository, FilterQuery, FromEntityType } from '@mikro-orm/core'
 import type { FindAllOptions } from '@mikro-orm/core/drivers/IDatabaseDriver'
 import type { EntityData } from '@mikro-orm/core/typings'
 import { Kysely, SelectQueryBuilder } from 'kysely'
-import { PassThrough, Transform } from 'stream'
+import { PassThrough, pipeline, Transform } from 'stream'
 
 import { isPlainObject, removeUndefined } from '../utils/helpers/object'
 import { peekAndReplayStream } from '../utils/helpers/streams'
@@ -184,7 +174,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     const entities = processed.map((i) => this.mapper.toEntity(i as DomainEntity))
     // MikroORM's insertMany() requires MikroEntity[] or RequiredEntityData[], but our mapper returns Partial<EntityDTO>[]
     // We use type assertion because at runtime the mapper provides the correct structure
-    const nextEntities = await this.repository.insertMany(entities as unknown as RequiredEntityData<DBEntity>[])
+    const nextEntities = await this.repository.insertMany(entities)
 
     if (!nextEntities.length) {
       return [] as R
@@ -239,7 +229,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
     const passThrough = new PassThrough({ objectMode: true })
     const transformToDomain = this.#createDomainStreamFromRawData()
-    passThrough.pipe(transformToDomain)
+    // pipeline (unlike .pipe) propagates the pump's destroy(err) below to the
+    // destination, so consumers see the failure instead of the process
+    // crashing on an unhandled 'error' event.
+    pipeline(passThrough, transformToDomain, () => {
+      // Errors surface on the destroyed destination stream; nothing to do here.
+    })
 
     void (async () => {
       try {
@@ -254,7 +249,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       }
     })()
 
-    return transformToDomain as unknown as PassThrough & AsyncIterable<R>
+    return transformToDomain
   }
 
   public async bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number> {
@@ -322,7 +317,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
         MikroRepository.#validateIdentifier(mapped, 'sort')
         orderBy[mapped] = dir
       }
-      options.orderBy = orderBy as OrderDefinition<DBEntity>
+      options.orderBy = orderBy
     }
 
     if (paginator) {
@@ -338,7 +333,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       options.where = filter
     }
 
-    return options as FindAllOptionsArg<DBEntity>
+    return options
   }
 
   #mapField(field: string): string {
@@ -362,7 +357,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
   // eslint-disable-next-line sonarjs/function-return-type
   #serializeCondition(condition?: Condition): FilterQuery<DBEntity> {
     if (condition == null) {
-      return {} as FilterQuery<DBEntity>
+      return {}
     }
 
     const serializer = this.config.conditionRegistry.getSerializer<FilterQuery<DBEntity>>(AdapterType.MIKROORM)
@@ -375,7 +370,7 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
     const meta = this.em.getMetadata().get(this.config.entityClass)
     const mapping: Record<string, string> = {}
 
-    for (const key of Object.keys(dbEntity as object)) {
+    for (const key of Object.keys(dbEntity)) {
       if (typeof (dbEntity as Record<string, unknown>)[key] === 'function') {
         continue
       }
@@ -448,7 +443,9 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
       },
     })
 
-    return stream.pipe(transform) as PassThrough & AsyncIterable<Record<string, unknown>>
+    return pipeline(stream, transform, () => {
+      // Errors surface on the destroyed destination stream; nothing to do here.
+    }) as PassThrough & AsyncIterable<Record<string, unknown>>
   }
 
   static readonly #defaultBulkInsertStrategy: IMikroBulkInsertStrategy = new KyselyChunkedBulkInsertStrategy()

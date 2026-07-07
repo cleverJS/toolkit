@@ -13,11 +13,19 @@ export async function listWithPagination<DomainEntity>(
 ): Promise<{ items: DomainEntity[]; total: number }> {
   const shouldCount = !paginator.getTotal() && !paginator.isSkipTotal()
 
-  const [items, total] = await Promise.all([
+  const [items, counted] = await Promise.all([
     repository.findAll({ condition, paginator, sort }),
     shouldCount ? repository.count(condition) : Promise.resolve(-1),
   ])
 
-  paginator.setTotal(total)
-  return { items, total }
+  if (shouldCount) {
+    paginator.setTotal(counted)
+    return { items, total: counted }
+  }
+
+  // Count skipped: a total cached on the paginator (from a previous call) is
+  // returned as-is and preserved — setTotal(-1) here would clamp it to 0 and
+  // force a re-count on the next call. -1 means "unknown" (skipTotal).
+  const cached = paginator.getTotal()
+  return { items, total: cached > 0 ? cached : -1 }
 }
