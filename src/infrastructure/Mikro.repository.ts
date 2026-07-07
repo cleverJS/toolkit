@@ -296,7 +296,12 @@ export class MikroRepository<DBEntity extends BaseEntity, DomainEntity, TPrimary
 
   protected getTable(): string {
     const meta = this.em.getMetadata().get(this.config.entityClass)
-    return meta.tableName
+    // Qualify with the schema when the entity declares a concrete one, so
+    // bulkInsert targets the right relation instead of whatever the search_path
+    // resolves. Consumers (Kysely, the COPY builder, SQL Server) all parse
+    // `schema.table`. MikroORM's `'*'` is a runtime-resolved wildcard schema,
+    // not a literal — skip it and fall back to the bare table name.
+    return meta.schema && meta.schema !== '*' ? `${meta.schema}.${meta.tableName}` : meta.tableName
   }
 
   // The new MikroORM 7 typing folds in a `WithUsingOptions` conditional over `IndexName<Entity>`,

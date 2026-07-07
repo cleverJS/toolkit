@@ -7,15 +7,30 @@ import { Transform } from 'stream'
  * the single place that defines the format, so escaping fixes apply to both.
  */
 
-/** Escapes a SQL identifier by quoting and doubling embedded double-quotes. */
+/** Escapes a single SQL identifier by quoting and doubling embedded double-quotes. */
 export function escapePgIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`
+}
+
+/**
+ * Escapes a possibly schema-qualified name (`schema.table`) into
+ * `"schema"."table"`. A bare `table` becomes `"table"`. The dot is treated as
+ * the schema separator to match how Kysely and knex parse the same string —
+ * `escapePgIdentifier('public.users')` alone would yield `"public.users"`, one
+ * identifier literally named `public.users`, so COPY would target the wrong
+ * (default-schema) relation.
+ */
+export function escapePgQualifiedName(name: string): string {
+  return name
+    .split('.')
+    .map((part) => escapePgIdentifier(part.trim()))
+    .join('.')
 }
 
 /** Builds the `COPY <table> (<columns>) FROM STDIN` statement for the mapping's DB columns. */
 export function buildCopyFromStdinSql(table: string, objectToDBmapping: Record<string, string>): string {
   const columns = Object.values(objectToDBmapping).map(escapePgIdentifier).join(', ')
-  return `COPY ${escapePgIdentifier(table)} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
+  return `COPY ${escapePgQualifiedName(table)} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
 }
 
 /**

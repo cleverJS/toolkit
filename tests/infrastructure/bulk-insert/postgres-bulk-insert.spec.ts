@@ -51,6 +51,30 @@ interface Product {
   metadata?: Record<string, any>
 }
 
+// Entity in a non-default schema — exercises MikroRepository.getTable()
+// qualifying the table with its schema so COPY hits the right relation.
+const SCOPED_SCHEMA = 'mikro_bulk_test'
+
+class ScopedProductEntity extends BaseEntity {
+  public id?: number
+  public name: string = ''
+}
+
+const ScopedProductSchema = defineEntity({
+  class: ScopedProductEntity,
+  tableName: 'scoped_products',
+  schema: SCOPED_SCHEMA,
+  properties: (p) => ({
+    id: p.integer().primary().autoincrement(),
+    name: p.string(),
+  }),
+})
+
+interface ScopedProduct {
+  id?: number
+  name: string
+}
+
 function jsonToStream<T>(arr: T[]): PassThrough & AsyncIterable<T> {
   const stream = new PassThrough({ objectMode: true })
 
@@ -88,7 +112,7 @@ describe('PostgreSQL Bulk Insert', () => {
     })
 
     orm = await MikroORM.init({
-      entities: [ProductSchema],
+      entities: [ProductSchema, ScopedProductSchema],
       driver: PostgreSqlDriver,
       driverOptions: new PostgresDialect({ pool: pgPool }),
       // MikroORM still wants a dbName even when a dialect is provided — used for schema ops.
@@ -390,10 +414,7 @@ describe('PostgreSQL Bulk Insert', () => {
     }
 
     it('should reject (not crash) when the source stream errors mid-flow on the COPY path', async () => {
-      const stream = erroringStream<Product>(
-        [{ name: 'First', price: 1, createdAt: new Date(), isActive: true }],
-        new Error('producer failed')
-      )
+      const stream = erroringStream<Product>([{ name: 'First', price: 1, createdAt: new Date(), isActive: true }], new Error('producer failed'))
 
       await expect(repository.bulkInsert(stream)).rejects.toThrow('producer failed')
 
@@ -427,6 +448,29 @@ describe('PostgreSQL Bulk Insert', () => {
       const rows = await repository.findAll({ sort: { price: 'asc' } })
       expect(rows[0].description).toBe('')
       expect(rows[1].description).toBeNull()
+    })
+
+    // Regression: MikroRepository.getTable() dropped the entity's schema, so
+    // COPY targeted the search_path instead of `mikro_bulk_test.scoped_products`.
+    it('should COPY into a table in a non-default schema (getTable qualifies with schema)', async () => {
+      const registry = new ConditionAdapterRegistry()
+      registry.register(AdapterType.MIKROORM, new MikroOrmConditionAdapter())
+
+      const scopedRepository = new MikroRepository<ScopedProductEntity, ScopedProduct>(
+        scope,
+        new MikroIdentityMapper<ScopedProduct, ScopedProductEntity>(ScopedProductEntity),
+        {
+          entityClass: ScopedProductEntity,
+          conditionRegistry: registry,
+          bulkInsertStrategy: resolveMikroBulkInsertStrategy({ kysely: em.getKysely(), pgPool }),
+        }
+      )
+
+      const inserted = await scopedRepository.bulkInsert(jsonToStream<ScopedProduct>([{ name: 'x' }, { name: 'y' }]))
+      expect(inserted).toBe(2)
+
+      const rows = await em.execute(`SELECT name FROM ${SCOPED_SCHEMA}.scoped_products ORDER BY name`)
+      expect(rows).toEqual([{ name: 'x' }, { name: 'y' }])
     })
   })
 })
