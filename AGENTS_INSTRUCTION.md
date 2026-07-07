@@ -37,21 +37,27 @@ interface IRepository<DomainEntity = any, PrimaryKey extends keyof DomainEntity 
   readonly primary?: string[]
 
   findOne(condition: Condition): Promise<DomainEntity | null>
+  findById(id: TPrimaryKeyPayload): Promise<DomainEntity | null>
   findAll(payload?: IFindAll): Promise<DomainEntity[]>
   findPartial<R = Partial<DomainEntity>>(payload: IFindAllWithSelect): Promise<R[]>
   count(condition?: Condition): Promise<number>
   insert(data: Omit<DomainEntity, PrimaryKey>): Promise<DomainEntity>
   updateOne(condition: Condition, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity>
+  updateById(id: TPrimaryKeyPayload, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity>
   update(condition: Condition, data: Partial<PropertySchema<DomainEntity>>): Promise<number>
   delete(condition: Condition): Promise<number>
+  deleteById(id: TPrimaryKeyPayload): Promise<number>
   insertMany<R = any[]>(items: Omit<DomainEntity, PrimaryKey>[]): Promise<R>
   bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number>
   stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R>
 }
+
+// TPrimaryKeyPayload = string | number | Date | Record<string, string | number | Date>
 ```
 
 **Constraints:**
 - `findAll` / `findPartial` / `stream`: when `paginator` is provided with `limit > 1`, `sort` is **required** (throws otherwise).
+- `findById` / `updateById` / `deleteById`: sugar over `findOne`/`updateOne`/`delete` with an equality condition on `repository.primary`. Scalar for a single-column key; `{ column: value }` (keys = `repository.primary`, DB-side names) for composite keys. Throw on: no primary key configured, nullish id, scalar for composite key, missing/extra/null keys in the object payload — misuse never widens the filter. Helper `buildPrimaryKeyCondition(primary, id)` is exported for custom implementations.
 - `updateOne`: throws if zero or more than one entity matches the condition, and (KnexRepository) if the row is deleted between its SELECT and UPDATE — run inside `scope.transaction()` to prevent rather than detect that race.
 - `KnexRepository.insert` / `updateOne` use `INSERT/UPDATE ... RETURNING` on PostgreSQL/MSSQL. On dialects without RETURNING (e.g. MySQL) they re-fetch the row with one extra SELECT (by payload PK values, else by `insertId` — trusted only on mysql/mysql2, single-column PK, positive integer). If the row cannot be identified, they throw — configure `primary`.
 

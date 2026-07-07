@@ -135,6 +135,24 @@ describe('KnexRepository (unit, scripted DB responses)', () => {
     })
   })
 
+  describe('findById', () => {
+    it('should throw when the repository has no primary key configured', async () => {
+      const { knex } = createFakeKnex([])
+      const repository = createRepository(knex, [])
+
+      await expect(repository.findById(1)).rejects.toThrow('Repository has no primary key configured')
+    })
+
+    it('should query by the configured primary key column', async () => {
+      const { knex } = createFakeKnex([[{ id: 5, txt: 'found' }]])
+      const repository = createRepository(knex)
+
+      const found = await repository.findById(5)
+
+      expect(found).toEqual({ id: 5, txt: 'found' })
+    })
+  })
+
   describe('insert', () => {
     it('should re-fetch by insertId on MySQL when the payload has no primary key value', async () => {
       const { knex, calls } = createFakeKnex(

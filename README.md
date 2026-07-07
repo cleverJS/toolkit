@@ -128,18 +128,35 @@ src/
 ```typescript
 interface IRepository<DomainEntity, PrimaryKey extends keyof DomainEntity = never> {
   findOne(condition: Condition): Promise<DomainEntity | null>
+  findById(id: TPrimaryKeyPayload): Promise<DomainEntity | null>
   findAll(payload?: IFindAll): Promise<DomainEntity[]>
   findPartial<R>(payload: IFindAllWithSelect): Promise<R[]>
   count(condition?: Condition): Promise<number>
   insert(data: Omit<DomainEntity, PrimaryKey>): Promise<DomainEntity>
   updateOne(condition: Condition, data: Partial<...>): Promise<DomainEntity>
+  updateById(id: TPrimaryKeyPayload, data: Partial<...>): Promise<DomainEntity>
   update(condition: Condition, data: Partial<...>): Promise<number>
   delete(condition: Condition): Promise<number>
+  deleteById(id: TPrimaryKeyPayload): Promise<number>
   insertMany(items: Omit<DomainEntity, PrimaryKey>[]): Promise<...>
   bulkInsert(stream: PassThrough & AsyncIterable<DomainEntity>): Promise<number>
   stream<R>(payload: IFindAllWithSelect): PassThrough & AsyncIterable<R>
 }
 ```
+
+**Primary-key shortcuts.** `findById`, `updateById`, and `deleteById` are sugar over `findOne`/`updateOne`/`delete` with a condition built from the repository's primary key — no `ConditionBuilder.create({ id }).build()` boilerplate:
+
+```typescript
+const user = await repository.findById(42)
+await repository.updateById(42, { name: 'New name' })
+const deleted = await repository.deleteById(42) // 0 or 1
+
+// Composite primary key: pass one value per key column.
+// Keys must match `repository.primary` exactly (DB-side names).
+await orderItems.findById({ orderId: 1, productId: 2 })
+```
+
+They throw (never fall back to a broader filter) when the repository has no primary key configured, the id is `null`/`undefined`, a composite key gets a scalar, or the object payload misses a key column / contains extra keys — so a bad payload can never make `deleteById` touch rows it didn't target. The underlying helper is exported as `buildPrimaryKeyCondition(primary, id)` for custom `IRepository` implementations.
 
 `IMapper<DomainEntity, DBEntity>` separates your domain models from database entities. `PropertySchema<T>` is a utility type that strips methods from `T`, keeping only data properties.
 

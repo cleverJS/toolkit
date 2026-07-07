@@ -3,6 +3,7 @@ export { listWithPagination } from './utils/list-with-pagination'
 
 // Infrastructure Layer (engine-agnostic)
 export { IRepository, IMapper, IRepositoryHooks } from './infrastructure/IRepository'
+export { buildPrimaryKeyCondition, TPrimaryKeyPayload, TPrimaryKeyValue } from './infrastructure/primary-key'
 export { IFindAll, IFindAllWithSelect, ISort } from './infrastructure/types'
 export { FieldMapper, FieldMapping, IdentityMapper, MikroIdentityMapper, MikroFieldMapper } from './infrastructure/mapper'
 
