@@ -1,13 +1,16 @@
 import { Knex } from 'knex'
 import { Client } from 'pg'
 import { from } from 'pg-copy-streams'
-import { PassThrough, Transform } from 'stream'
+import { PassThrough } from 'stream'
 import { pipeline } from 'stream/promises'
 
 import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'
+import { buildCopyFromStdinSql, createTabRowTransform } from '../shared/pgCopyCsv'
 
 /**
- * PostgreSQL-specific bulk insert implementation using COPY command
+ * PostgreSQL-specific bulk insert implementation using COPY command.
+ * CSV serialization is shared with the Mikro-side COPY strategy
+ * (`shared/pgCopyCsv.ts`).
  */
 export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
   public async execute<T>(knex: Knex, stream: PassThrough & AsyncIterable<T>, options: IBulkInsertOptions): Promise<number> {
@@ -17,99 +20,24 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const connection: Client = await client.acquireConnection()
 
-    // Escape SQL identifiers by doubling embedded double-quotes
-    const escapeId = (name: string) => `"${name.replace(/"/g, '""')}"`
-
-    const columns = Object.values(objectToDBmapping)
-      .map((columnName) => escapeId(columnName))
-      .join(', ')
-
     let rowCount = 0
 
     try {
-      const sql = `COPY ${escapeId(table)} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
-      const copyStream = connection.query(from(sql))
-
-      // Transform stream and count rows
-      const countingStream = new Transform({
-        objectMode: true,
-        transform(chunk, _encoding, callback) {
-          rowCount++
-          callback(null, chunk)
-        },
-      })
+      const copyStream = connection.query(from(buildCopyFromStdinSql(table, objectToDBmapping)))
 
       // pipeline (unlike .pipe chains) rejects on a failure in ANY stage —
       // source, transform, or COPY sink — and destroys the whole chain, so
       // the connection is always released and callers see the error instead
       // of the process crashing on an unhandled 'error' event.
-      await pipeline(stream, this.transformToTabRow(objectToDBmapping), countingStream, copyStream)
+      await pipeline(
+        stream,
+        createTabRowTransform(objectToDBmapping, () => rowCount++),
+        copyStream
+      )
 
       return rowCount
     } finally {
       await client.releaseConnection(connection)
     }
-  }
-
-  private transformToTabRow(objectToDBmapping: Record<string, string>): Transform {
-    const objectKeys = Object.keys(objectToDBmapping)
-
-    const transformer = new Transform({
-      objectMode: true,
-      transform(chunk: Record<string, number | boolean | string | Date | null>, _encoding, callback) {
-        try {
-          const orderedValues = objectKeys.map((key) => {
-            let value: number | boolean | string | Date | null = null
-            if (Object.prototype.hasOwnProperty.call(chunk, key)) {
-              value = chunk[key]
-            }
-
-            // Handle null/undefined
-            if (value == null) {
-              return ''
-            }
-
-            const isDate = value instanceof Date && !isNaN(value.getTime())
-
-            if (isDate) {
-              return (<Date>value).toISOString()
-            }
-
-            // Handle objects (like JSON metadata)
-            // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
-            if (!isDate && value && typeof value === 'object') {
-              const string = JSON.stringify(value)
-              // Quote and escape quotes for CSV format
-              return `"${string.replace(/"/g, '""')}"`
-            }
-
-            // Convert to string
-            const strValue = value.toString()
-
-            // COPY CSV treats an unquoted empty field as NULL — quote it so an
-            // empty string stays an empty string instead of becoming NULL.
-            if (strValue === '') {
-              return '""'
-            }
-
-            // For CSV format with tab delimiter, we need to quote fields that contain
-            // special characters: tabs, newlines, quotes, or the delimiter itself
-            if (strValue.includes('\t') || strValue.includes('\n') || strValue.includes('"') || strValue.includes('\r')) {
-              // Quote the value and escape internal quotes by doubling them
-              return `"${strValue.replace(/"/g, '""')}"`
-            }
-
-            return strValue
-          })
-
-          const line = orderedValues.join('\t') + '\n'
-          callback(null, line)
-        } catch (e) {
-          callback(e as Error)
-        }
-      },
-    })
-
-    return transformer
   }
 }

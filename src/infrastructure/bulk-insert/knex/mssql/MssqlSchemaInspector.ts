@@ -137,7 +137,7 @@ export class MssqlSchemaInspector implements IMssqlSchemaInspector {
     if (Array.isArray(raw)) {
       return raw
     }
-    if (raw && Array.isArray((raw as { rows?: ISysColumnRow[] }).rows)) {
+    if (raw && Array.isArray(raw.rows)) {
       return (raw as { rows: ISysColumnRow[] }).rows
     }
     return []

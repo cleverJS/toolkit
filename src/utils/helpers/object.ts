@@ -20,24 +20,32 @@ export function getKeyByValue<T extends { [index: string]: string | number }>(en
 /**
  * Checks if an object is empty or contains only null/undefined values (recursively).
  * Note: `{ a: null }` is considered empty.
+ *
+ * Only plain objects and arrays are recursed into. Class instances (Date, Map,
+ * Set, Buffer, ...) are opaque values — their state usually lives in
+ * non-enumerable slots, so recursing would wrongly report them empty. They
+ * always count as non-empty.
  */
 export function isEmptyObject(obj: Record<string, unknown>): boolean {
   if (obj == null) {
     return true
   }
   for (const key in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, key)) {
-      const value = obj[key]
-      if (value == null) {
-        continue
-      }
-      if (typeof value === 'object') {
-        if (!isEmptyObject(value as Record<string, unknown>)) {
-          return false
-        }
-      } else {
-        return false
-      }
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) {
+      continue
+    }
+    const value = obj[key]
+    if (value == null) {
+      continue
+    }
+    if (typeof value !== 'object') {
+      return false
+    }
+    if (!isPlainObject(value) && !Array.isArray(value)) {
+      return false
+    }
+    if (!isEmptyObject(value as Record<string, unknown>)) {
+      return false
     }
   }
   return true

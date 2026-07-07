@@ -52,7 +52,8 @@ interface IRepository<DomainEntity = any, PrimaryKey extends keyof DomainEntity 
 
 **Constraints:**
 - `findAll` / `findPartial` / `stream`: when `paginator` is provided with `limit > 1`, `sort` is **required** (throws otherwise).
-- `updateOne`: throws if zero or more than one entity matches the condition.
+- `updateOne`: throws if zero or more than one entity matches the condition, and (KnexRepository) if the row is deleted between its SELECT and UPDATE — run inside `scope.transaction()` to prevent rather than detect that race.
+- `KnexRepository.insert` / `updateOne` use `INSERT/UPDATE ... RETURNING` on PostgreSQL/MSSQL. On dialects without RETURNING (e.g. MySQL) they re-fetch the row with one extra SELECT (by payload PK values, else by `insertId` — trusted only on mysql/mysql2, single-column PK, positive integer). If the row cannot be identified, they throw — configure `primary`.
 
 ### IMapper\<DomainEntity, DBEntity\>
 
@@ -407,7 +408,7 @@ Skips `count` call when `paginator.getTotal() > 0` or `paginator.isSkipTotal()`.
 removeNullish<T>(obj: T): Partial<T>         // strips null and undefined values
 removeUndefined<T>(obj: T): Partial<T>       // strips only undefined (keeps null)
 getKeyByValue<T>(enumObj: T, value): keyof T | null  // reverse enum lookup
-isEmptyObject(obj): boolean                   // recursive; { a: null } → true
+isEmptyObject(obj): boolean                   // recursive; { a: null } → true; class instances (Date, Map, ...) are opaque values → non-empty
 intersect(setA: Set, setB: Set): Set          // set intersection
 ```
 

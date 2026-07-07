@@ -87,6 +87,22 @@ describe('isEmptyObject', () => {
   it('should return false when nested object has a value', () => {
     expect(isEmptyObject({ a: { b: null, c: { d: 42 } } })).toBe(false)
   })
+
+  // Regression: class instances keep their state in non-enumerable slots, so
+  // the for..in recursion used to see no keys and report them "empty".
+  it('should return false for class instances (opaque values)', () => {
+    expect(isEmptyObject({ a: new Date() })).toBe(false)
+    expect(isEmptyObject({ a: new Map() })).toBe(false)
+    expect(isEmptyObject({ a: new Set() })).toBe(false)
+    expect(isEmptyObject({ a: Buffer.alloc(0) })).toBe(false)
+    expect(isEmptyObject({ a: { b: new Date() } })).toBe(false)
+  })
+
+  it('should keep array semantics: empty/nullish-only arrays are empty, arrays with values are not', () => {
+    expect(isEmptyObject({ a: [] })).toBe(true)
+    expect(isEmptyObject({ a: [null, undefined] })).toBe(true)
+    expect(isEmptyObject({ a: [0] })).toBe(false)
+  })
 })
 
 describe('isPlainObject', () => {

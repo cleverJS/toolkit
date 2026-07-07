@@ -1,0 +1,84 @@
+import { Transform } from 'stream'
+
+/**
+ * Shared CSV serialization for the PostgreSQL `COPY ... FROM STDIN` strategies.
+ * `PostgresBulkInsertStrategy` (knex) and `PostgresCopyBulkInsertStrategy`
+ * (Mikro/Kysely) must produce byte-identical COPY payloads — this module is
+ * the single place that defines the format, so escaping fixes apply to both.
+ */
+
+/** Escapes a SQL identifier by quoting and doubling embedded double-quotes. */
+export function escapePgIdentifier(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`
+}
+
+/** Builds the `COPY <table> (<columns>) FROM STDIN` statement for the mapping's DB columns. */
+export function buildCopyFromStdinSql(table: string, objectToDBmapping: Record<string, string>): string {
+  const columns = Object.values(objectToDBmapping).map(escapePgIdentifier).join(', ')
+  return `COPY ${escapePgIdentifier(table)} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
+}
+
+/**
+ * Creates a Transform that serializes entity rows (keyed by property name)
+ * into tab-delimited CSV lines ordered by the mapping's columns. Missing keys
+ * and null/undefined become NULL (empty unquoted field); empty strings are
+ * quoted so they stay empty strings. `onRow` fires once per serialized row —
+ * COPY reports no row count, so callers count here.
+ */
+export function createTabRowTransform(objectToDBmapping: Record<string, string>, onRow?: () => void): Transform {
+  const objectKeys = Object.keys(objectToDBmapping)
+
+  return new Transform({
+    objectMode: true,
+    transform(chunk: Record<string, unknown>, _enc, callback) {
+      try {
+        const orderedValues = objectKeys.map((key) => {
+          let value: unknown = null
+          if (Object.prototype.hasOwnProperty.call(chunk, key)) {
+            // eslint-disable-next-line security/detect-object-injection
+            value = chunk[key]
+          }
+          return serializeCsvValue(value)
+        })
+
+        onRow?.()
+        callback(null, orderedValues.join('\t') + '\n')
+      } catch (e) {
+        callback(e as Error)
+      }
+    },
+  })
+}
+
+function serializeCsvValue(value: unknown): string {
+  if (value === undefined || value === null) return ''
+
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return value.toISOString()
+  }
+
+  if (typeof value === 'object') {
+    const string = JSON.stringify(value)
+    return `"${string.replace(/"/g, '""')}"`
+  }
+
+  // At this point value is a primitive (string | number | boolean | bigint | symbol).
+  let strValue: string
+  if (typeof value === 'string') {
+    strValue = value
+  } else {
+    // number | boolean | bigint | symbol — each has a well-defined toString().
+    strValue = (value as number | boolean | bigint | symbol).toString()
+  }
+
+  // COPY CSV treats an unquoted empty field as NULL — quote it so an empty
+  // string stays an empty string instead of becoming NULL.
+  if (strValue === '') {
+    return '""'
+  }
+
+  if (strValue.includes('\t') || strValue.includes('\n') || strValue.includes('"') || strValue.includes('\r')) {
+    return `"${strValue.replace(/"/g, '""')}"`
+  }
+  return strValue
+}

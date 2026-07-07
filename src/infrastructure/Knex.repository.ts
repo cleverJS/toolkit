@@ -28,6 +28,12 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
 > {
   public readonly primary?: string[]
 
+  // Lazily resolved default bulk-insert strategy. Cached so strategy-level
+  // state (e.g. the MSSQL schema cache) survives across bulkInsert() calls —
+  // resolving per call would recreate the strategy with an empty cache every
+  // time. Safe to cache: the dialect of a scope's connection never changes.
+  #resolvedBulkInsertStrategy?: IBulkInsertStrategy<Knex>
+
   public constructor(
     protected readonly scope: IConnectionScope<Knex>,
     protected readonly mapper: IMapper<DomainEntity, DBEntity>,
@@ -101,12 +107,19 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
   public async insert(data: Omit<DomainEntity, TPrimaryKey>): Promise<DomainEntity> {
     const processed = this.config.hooks?.beforeInsert?.(data as DomainEntity) ?? data
     const entity = this.mapper.toEntity(processed as DomainEntity)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const [inserted] = await this.knex(this.config.table)
+    const result: unknown = await this.knex(this.config.table)
       .insert(entity as Record<string, unknown>)
       .returning('*')
 
-    return this.mapper.toDomain(inserted as DBEntity)
+    const returned: unknown = Array.isArray(result) ? result[0] : result
+    if (isRowObject(returned)) {
+      return this.mapper.toDomain(returned as DBEntity)
+    }
+
+    // Dialect without RETURNING support (e.g. MySQL, where knex resolves
+    // insert() with [insertId] instead of the row): re-fetch the inserted row
+    // so the returned entity reflects DB defaults and triggers.
+    return this.#refetchInserted(entity as Record<string, unknown>, returned)
   }
 
   public async updateOne(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<DomainEntity> {
@@ -137,10 +150,26 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
     const item = items[0] as DBEntity
     const primaryCondition = this.#buildPrimaryCondition(item)
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const [updated] = await this.knex(this.config.table).update(cleanedEntity).where(primaryCondition).returning('*')
+    const updateResult: unknown = await this.knex(this.config.table).update(cleanedEntity).where(primaryCondition).returning('*')
 
-    return this.mapper.toDomain(updated as DBEntity)
+    const returned: unknown = Array.isArray(updateResult) ? updateResult[0] : undefined
+    if (isRowObject(returned)) {
+      return this.mapper.toDomain(returned as DBEntity)
+    }
+
+    // No row means either the dialect doesn't support RETURNING (e.g. MySQL,
+    // where knex resolves update() with the affected-row count) or the row was
+    // deleted between the SELECT above and this UPDATE. Re-fetch by primary
+    // key to distinguish the two. Note: the count alone can't tell (MySQL
+    // reports 0 affected rows for a no-op update of identical values). Run
+    // updateOne inside scope.transaction() if the race itself must be
+    // prevented rather than detected.
+    const rows = await this.knex(this.config.table).select('*').where(primaryCondition)
+    if (!rows.length) {
+      throw new Error('Entity to update was deleted concurrently')
+    }
+
+    return this.mapper.toDomain(rows[0] as DBEntity)
   }
 
   public async update(condition: Readonly<Condition>, data: Partial<PropertySchema<DomainEntity>>): Promise<number> {
@@ -222,7 +251,7 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
     const mapping = this.#buildFieldMapping(sample)
     const entityStream = this.#createEntityStream(replayStream)
 
-    const strategy = this.config.bulkInsertStrategy ?? resolveBulkInsertStrategy(this.knex)
+    const strategy = this.config.bulkInsertStrategy ?? (this.#resolvedBulkInsertStrategy ??= resolveBulkInsertStrategy(this.knex))
     return strategy.execute(this.knex, entityStream, {
       table: this.config.table,
       objectToDBmapping: mapping,
@@ -299,6 +328,55 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
     return condition
   }
 
+  async #refetchInserted(entity: Record<string, unknown>, returned: unknown): Promise<DomainEntity> {
+    const lookup = this.#buildInsertLookup(entity, returned)
+    const rows = await this.knex(this.config.table).select('*').where(lookup)
+
+    if (!rows.length) {
+      throw new Error(`KnexRepository.insert: inserted row not found on re-fetch by ${JSON.stringify(lookup)}`)
+    }
+
+    return this.mapper.toDomain(rows[0] as DBEntity)
+  }
+
+  /**
+   * Identifies the just-inserted row when the dialect returned no row.
+   * Preference order:
+   *   1. Primary-key values supplied in the payload itself — authoritative,
+   *      covers natural and composite keys.
+   *   2. The driver-reported insertId. Trusted ONLY when all of the following
+   *      hold, so an arbitrary number is never mistaken for an id:
+   *      - the dialect is the MySQL family (knex contractually resolves
+   *        insert() with [result.insertId] there; the value comes from THIS
+   *        statement's driver response, not a separate LAST_INSERT_ID() query,
+   *        so pooling cannot mix up connections);
+   *      - the value is a positive integer (MySQL reports 0 when the table
+   *        has no auto-increment column);
+   *      - the primary key is a single column (the auto-increment one).
+   */
+  #buildInsertLookup(entity: Record<string, unknown>, returned: unknown): Record<string, unknown> {
+    const primary = this.primary ?? []
+
+    if (primary.length > 0 && primary.every((key) => entity[key] != null)) {
+      return Object.fromEntries(primary.map((key) => [key, entity[key]]))
+    }
+
+    if (primary.length === 1 && this.#isMysqlDialect() && typeof returned === 'number' && Number.isInteger(returned) && returned > 0) {
+      return { [primary[0]]: returned }
+    }
+
+    throw new Error(
+      'KnexRepository.insert: the dialect returned no row from INSERT ... RETURNING and the inserted row cannot be identified ' +
+        '(no primary key values in the payload and no trustworthy insertId). ' +
+        'Configure `primary` in the repository config or use a RETURNING-capable dialect (PostgreSQL, MSSQL).'
+    )
+  }
+
+  #isMysqlDialect(): boolean {
+    const client = (this.knex as unknown as { client?: { config?: { client?: string } } }).client?.config?.client
+    return client === 'mysql' || client === 'mysql2'
+  }
+
   #buildFieldMapping(item: DomainEntity): Record<string, string> {
     const dbEntity = this.mapper.toEntity(item)
     const mapping: Record<string, string> = {}
@@ -349,4 +427,14 @@ export class KnexRepository<DBEntity, DomainEntity, TPrimaryKey extends keyof Do
       // Errors surface on the destroyed destination stream; nothing to do here.
     }) as PassThrough & AsyncIterable<DBEntity>
   }
+}
+
+/**
+ * True when a RETURNING result element is an actual row. Deliberately looser
+ * than `isPlainObject`: some drivers return class instances (e.g. mysql2's
+ * RowDataPacket) rather than plain objects. Numbers (MySQL insertId / affected
+ * count), strings, and arrays are not rows.
+ */
+function isRowObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

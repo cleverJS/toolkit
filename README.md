@@ -143,6 +143,10 @@ interface IRepository<DomainEntity, PrimaryKey extends keyof DomainEntity = neve
 
 `IMapper<DomainEntity, DBEntity>` separates your domain models from database entities. `PropertySchema<T>` is a utility type that strips methods from `T`, keeping only data properties.
 
+> **KnexRepository dialect note.** `insert` and `updateOne` use `INSERT/UPDATE ... RETURNING` where the dialect supports it (PostgreSQL, MSSQL). On dialects without RETURNING (e.g. MySQL) they transparently **re-fetch** the row with one extra SELECT, so the returned entity still reflects DB defaults and triggers. The inserted row is identified by the primary-key values from the payload when present; otherwise by the driver-reported `insertId` — trusted only on the MySQL family, for a single-column primary key, and when the value is a positive integer (MySQL reports `0` when the table has no auto-increment column). If neither identifies the row, a descriptive error is thrown — configure `primary` in the repository config.
+>
+> `updateOne` runs a SELECT followed by an UPDATE; if the row is deleted in between it throws `Entity to update was deleted concurrently`. Wrap the call in `scope.transaction()` when the race must be prevented rather than detected.
+
 ```typescript
 interface IMapper<DomainEntity, DBEntity> {
   toDomain(entity: DBEntity): DomainEntity
@@ -623,6 +627,7 @@ import { removeNullish, removeUndefined, isEmptyObject, intersect } from '@cleve
 removeNullish({ a: 1, b: null, c: undefined })   // { a: 1 }
 removeUndefined({ a: 1, b: null, c: undefined })  // { a: 1, b: null }
 isEmptyObject({ a: null })                         // true (recursively)
+isEmptyObject({ a: new Date() })                   // false — class instances are opaque values
 intersect(new Set([1, 2]), new Set([2, 3]))        // Set { 2 }
 ```
 

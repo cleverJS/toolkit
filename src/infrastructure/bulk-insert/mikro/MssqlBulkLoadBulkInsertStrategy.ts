@@ -1,32 +1,20 @@
 import { Kysely } from 'kysely'
-import { PassThrough, pipeline, Transform } from 'stream'
+import { PassThrough } from 'stream'
 
 import { peekAndReplayStream } from '../../../utils/helpers/streams'
 import { IMssqlColumnDescriptor, IMssqlSchemaInspector } from '../knex/mssql/MssqlSchemaInspector'
+import { IMssqlBulkLoadFlags, ITediousConnection, normaliseTableKey, runBulkLoad, selectColumnsForBulkLoad } from '../shared/mssqlBulkLoad'
 
 import { IMikroBulkInsertContext, IMikroBulkInsertStrategy } from './IMikroBulkInsertStrategy'
 import { KyselyChunkedBulkInsertStrategy } from './KyselyChunkedBulkInsertStrategy'
 import { KyselyMssqlSchemaInspector } from './KyselyMssqlSchemaInspector'
 
-/**
- * Structural subset of `tedious.BulkLoad`. Declared inline to keep `tedious`
- * an optional peer dependency at the type level.
- */
-interface ITediousBulkLoad {
-  setTimeout(ms: number): void
-  addColumn(name: string, type: unknown, options: unknown): void
-}
+const STRATEGY_NAME = 'MssqlBulkLoadBulkInsertStrategy'
 
-/**
- * Structural subset of `tedious.Connection`. The strategy only needs the
- * BulkLoad-related members.
- */
-export interface ITediousConnection {
-  newBulkLoad(table: string, options: unknown, callback: (err: Error | null | undefined, rowCount?: number) => void): ITediousBulkLoad
-  execBulkLoad(bulkLoad: ITediousBulkLoad, rows: AsyncIterable<unknown> | Iterable<unknown>): void
-  close?(): void
-  state?: { name?: string }
-}
+// Re-exported for API stability: this type was declared here before the
+// BulkLoad core moved to shared/mssqlBulkLoad.ts, and it is part of the
+// public `@cleverjs/toolkit/mikro` surface (via ITediousConnectionFactory).
+export type { ITediousConnection }
 
 /**
  * Caller-managed tedious connection source. The strategy invokes `acquire()` once
@@ -67,13 +55,7 @@ export interface IMssqlBulkLoadOptions {
   timeout?: number
 
   /** tedious BulkLoad behavior flags — see `Options` in `tedious/lib/bulk-load.d.ts`. */
-  bulkOptions?: {
-    checkConstraints?: boolean
-    fireTriggers?: boolean
-    keepNulls?: boolean
-    lockTable?: boolean
-    order?: Record<string, 'ASC' | 'DESC'>
-  }
+  bulkOptions?: IMssqlBulkLoadFlags
 
   /** Cache schemas across `execute()` calls. Default `true`. Disable when table DDL may change at runtime. */
   cacheSchema?: boolean
@@ -92,11 +74,13 @@ export interface IMssqlBulkLoadOptions {
 /**
  * MSSQL streaming bulk insert via tedious' TDS `BulkLoad` (BCP) path.
  *
- * Why a separate code path from `MssqlBulkInsertStrategy`: the existing knex-based
+ * Why a separate code path from `MssqlBulkInsertStrategy`: the knex-based
  * strategy expects a `Knex.Client` to acquire a tedious connection. MikroORM v7
  * ships Kysely instead, and Kysely's MssqlDialect hides its tedious connections
  * behind hash-private fields. The Mikro variant therefore takes a caller-managed
- * `ITediousConnectionFactory` so the user controls connection lifecycle.
+ * `ITediousConnectionFactory` so the user controls connection lifecycle. The
+ * BulkLoad execution itself is shared with the knex strategy
+ * (`shared/mssqlBulkLoad.ts`).
  *
  * Schema introspection (column types, identity/computed flags) goes through
  * MikroORM's Kysely (via `KyselyMssqlSchemaInspector`) so it shares the same
@@ -125,7 +109,7 @@ export class MssqlBulkLoadBulkInsertStrategy implements IMikroBulkInsertStrategy
     if (ctx.isInTransaction) {
       if (!this.fallbackInTransaction) {
         throw new Error(
-          'MssqlBulkLoadBulkInsertStrategy: BulkLoad cannot run inside a MikroORM transaction (Kysely owns the connection). ' +
+          `${STRATEGY_NAME}: BulkLoad cannot run inside a MikroORM transaction (Kysely owns the connection). ` +
             'Enable `fallbackInTransaction` (default) or invoke `bulkInsert` outside `scope.transaction()`.'
         )
       }
@@ -152,11 +136,11 @@ export class MssqlBulkLoadBulkInsertStrategy implements IMikroBulkInsertStrategy
     }
 
     const schema = await this.#getSchema(kysely, table)
-    const columnsToLoad = this.#selectColumnsForBulkLoad(schema, objectToDBmapping)
+    const columnsToLoad = selectColumnsForBulkLoad(schema, objectToDBmapping, STRATEGY_NAME)
 
     if (columnsToLoad.length === 0) {
       throw new Error(
-        `MssqlBulkLoadBulkInsertStrategy: no insertable columns resolved for table "${table}". Verify that objectToDBmapping references existing, non-identity, non-computed columns.`
+        `${STRATEGY_NAME}: no insertable columns resolved for table "${table}". Verify that objectToDBmapping references existing, non-identity, non-computed columns.`
       )
     }
 
@@ -165,7 +149,15 @@ export class MssqlBulkLoadBulkInsertStrategy implements IMikroBulkInsertStrategy
 
     let bulkLoadError: unknown = null
     try {
-      return await this.#runBulkLoad(connection, table, replayStream, columnsToLoad, objectToDBmapping)
+      return await runBulkLoad({
+        connection,
+        table,
+        stream: replayStream,
+        columns: columnsToLoad,
+        objectToDBmapping,
+        timeout: this.options.timeout,
+        bulkOptions: this.options.bulkOptions,
+      })
     } catch (err) {
       bulkLoadError = err
       throw err
@@ -193,156 +185,13 @@ export class MssqlBulkLoadBulkInsertStrategy implements IMikroBulkInsertStrategy
     return schema
   }
 
-  #selectColumnsForBulkLoad(schema: IMssqlColumnDescriptor[], objectToDBmapping: Record<string, string>): IMssqlColumnDescriptor[] {
-    const byLowerName = new Map(schema.map((c) => [c.name.toLowerCase(), c]))
-    const wantedDbColumns = new Set(Object.values(objectToDBmapping))
-
-    const missing: string[] = []
-    const seen = new Set<string>()
-    const result: IMssqlColumnDescriptor[] = []
-
-    for (const dbColumn of wantedDbColumns) {
-      const col = byLowerName.get(dbColumn.toLowerCase())
-      if (!col) {
-        missing.push(dbColumn)
-        continue
-      }
-      if (col.isIdentity || col.isComputed) continue
-      if (seen.has(col.name)) continue
-      seen.add(col.name)
-      result.push(col)
-    }
-
-    if (missing.length > 0) {
-      throw new Error(`MssqlBulkLoadBulkInsertStrategy: columns not found in table schema: ${missing.join(', ')}`)
-    }
-
-    return result
-  }
-
-  #runBulkLoad(
-    connection: ITediousConnection,
-    table: string,
-    stream: PassThrough & AsyncIterable<Record<string, unknown>>,
-    columns: IMssqlColumnDescriptor[],
-    objectToDBmapping: Record<string, string>
-  ): Promise<number> {
-    return new Promise<number>((resolve, reject) => {
-      let settled = false
-      const rowStream = buildRowStream(stream, objectToDBmapping, columns)
-
-      const settleReject = (err: unknown): void => {
-        if (settled) return
-        settled = true
-        const error = err instanceof Error ? err : new Error(String(err))
-        rowStream.destroy(error)
-        if (typeof stream.destroy === 'function') {
-          stream.destroy(err instanceof Error ? err : undefined)
-        }
-        reject(error)
-      }
-
-      const settleResolve = (rowCount: number): void => {
-        if (settled) return
-        settled = true
-        resolve(rowCount)
-      }
-
-      const bulkLoad = connection.newBulkLoad(table, this.options.bulkOptions ?? {}, (error, rowCount) => {
-        if (error) {
-          settleReject(error)
-          return
-        }
-        settleResolve(rowCount ?? 0)
-      })
-
-      if (typeof this.options.timeout === 'number') {
-        bulkLoad.setTimeout(this.options.timeout)
-      }
-
-      for (const col of columns) {
-        bulkLoad.addColumn(col.name, col.type, col.options)
-      }
-
-      rowStream.on('error', (err) => settleReject(err))
-
-      try {
-        connection.execBulkLoad(bulkLoad, rowStream)
-      } catch (err) {
-        settleReject(err)
-      }
-    })
-  }
-
   #assertConnectionUsable(connection: ITediousConnection): void {
     if (typeof connection.newBulkLoad !== 'function' || typeof connection.execBulkLoad !== 'function') {
-      throw new Error('MssqlBulkLoadBulkInsertStrategy: factory.acquire() did not return a tedious-compatible connection.')
+      throw new Error(`${STRATEGY_NAME}: factory.acquire() did not return a tedious-compatible connection.`)
     }
     const stateName = connection.state?.name
     if (stateName && stateName !== 'LoggedIn') {
-      throw new Error(`MssqlBulkLoadBulkInsertStrategy: tedious connection is not in LoggedIn state (actual: ${stateName}).`)
+      throw new Error(`${STRATEGY_NAME}: tedious connection is not in LoggedIn state (actual: ${stateName}).`)
     }
   }
-}
-
-function normaliseTableKey(table: string): string {
-  return table.toLowerCase().replace(/\[/g, '').replace(/\]/g, '').trim()
-}
-
-function buildRowStream(
-  stream: PassThrough & AsyncIterable<Record<string, unknown>>,
-  objectToDBmapping: Record<string, string>,
-  columns: IMssqlColumnDescriptor[]
-): Transform {
-  // Build canonical (case-correct) lookup from "wanted DB column" → descriptor so emitted
-  // row keys match what BulkLoad expects.
-  const canonicalByLower = new Map(columns.map((c) => [c.name.toLowerCase(), c.name]))
-  const reverseMapping: Array<[string, string]> = []
-  for (const [objKey, dbCol] of Object.entries(objectToDBmapping)) {
-    const canonical = canonicalByLower.get(dbCol.toLowerCase())
-    if (canonical) {
-      reverseMapping.push([objKey, canonical])
-    }
-  }
-
-  const transformer = new Transform({
-    objectMode: true,
-    transform(chunk: Record<string, unknown>, _enc, callback) {
-      try {
-        const row: Record<string, unknown> = {}
-        for (const [objKey, dbCol] of reverseMapping) {
-          if (!Object.prototype.hasOwnProperty.call(chunk, objKey)) {
-            // eslint-disable-next-line security/detect-object-injection
-            row[dbCol] = null
-            continue
-          }
-          // eslint-disable-next-line security/detect-object-injection
-          const value = chunk[objKey]
-          // eslint-disable-next-line security/detect-object-injection
-          row[dbCol] = serialiseValue(value)
-        }
-        callback(null, row)
-      } catch (err) {
-        callback(err as Error)
-      }
-    },
-  })
-
-  // pipeline (unlike .pipe) propagates source errors to the transformer, whose
-  // 'error' listener in #runBulkLoad settles the BulkLoad promise — otherwise a
-  // source failure is an unhandled 'error' event and crashes the process.
-  return pipeline(stream, transformer, () => {
-    // Errors surface via the transformer's 'error' event; nothing to do here.
-  })
-}
-
-function serialiseValue(value: unknown): unknown {
-  if (value === undefined || value === null) return null
-  if (value instanceof Date) return value
-  // Binary payloads (VarBinary / Binary columns) pass through unchanged. JSON.stringify
-  // on a Buffer would emit `{"type":"Buffer",...}`.
-  if (Buffer.isBuffer(value)) return value
-  if (ArrayBuffer.isView(value)) return value
-  if (typeof value === 'object') return JSON.stringify(value)
-  return value
 }

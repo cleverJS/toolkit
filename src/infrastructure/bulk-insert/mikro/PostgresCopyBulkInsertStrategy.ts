@@ -1,6 +1,8 @@
 import { from as copyFrom } from 'pg-copy-streams'
-import { PassThrough, Transform } from 'stream'
+import { PassThrough } from 'stream'
 import { pipeline } from 'stream/promises'
+
+import { buildCopyFromStdinSql, createTabRowTransform } from '../shared/pgCopyCsv'
 
 import { IMikroBulkInsertContext, IMikroBulkInsertStrategy } from './IMikroBulkInsertStrategy'
 import { KyselyChunkedBulkInsertStrategy } from './KyselyChunkedBulkInsertStrategy'
@@ -88,9 +90,6 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
 
   async #executeCopy(ctx: IMikroBulkInsertContext): Promise<number> {
     const { table, stream, objectToDBmapping } = ctx
-    const escapeId = (name: string): string => `"${name.replace(/"/g, '""')}"`
-    const columns = Object.values(objectToDBmapping).map(escapeId).join(', ')
-    const sql = `COPY ${escapeId(table)} (${columns}) FROM STDIN WITH (FORMAT csv, DELIMITER E'\\t')`
 
     const client = await this.options.pool.connect()
     let rowCount = 0
@@ -98,21 +97,17 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
     try {
       // pg-copy-streams expects a Writable that pg.Client.query understands —
       // typed loosely because we treat `pg` as an optional peer dep.
-      const copyStream = client.query(copyFrom(sql))
-
-      const counting = new Transform({
-        objectMode: true,
-        transform(chunk: unknown, _enc, callback) {
-          rowCount++
-          callback(null, chunk)
-        },
-      })
+      const copyStream = client.query(copyFrom(buildCopyFromStdinSql(table, objectToDBmapping)))
 
       // pipeline (unlike .pipe chains) rejects on a failure in ANY stage —
       // source, transform, or COPY sink — and destroys the whole chain, so
       // the connection is always released and callers see the error instead
       // of the process crashing on an unhandled 'error' event.
-      await pipeline(stream, PostgresCopyBulkInsertStrategy.#transformToTabRow(objectToDBmapping), counting, copyStream as unknown as PassThrough)
+      await pipeline(
+        stream,
+        createTabRowTransform(objectToDBmapping, () => rowCount++),
+        copyStream as unknown as PassThrough
+      )
 
       return rowCount
     } finally {
@@ -122,65 +117,5 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
         // best-effort — release errors should not mask a successful COPY result
       }
     }
-  }
-
-  static #transformToTabRow(objectToDBmapping: Record<string, string>): Transform {
-    const objectKeys = Object.keys(objectToDBmapping)
-
-    const transformer = new Transform({
-      objectMode: true,
-      transform(chunk: Record<string, unknown>, _enc, callback) {
-        try {
-          const orderedValues = objectKeys.map((key) => {
-            let value: unknown = null
-            if (Object.prototype.hasOwnProperty.call(chunk, key)) {
-              // eslint-disable-next-line security/detect-object-injection
-              value = chunk[key]
-            }
-            return PostgresCopyBulkInsertStrategy.#serializeValue(value)
-          })
-
-          const line = orderedValues.join('\t') + '\n'
-          callback(null, line)
-        } catch (e) {
-          callback(e as Error)
-        }
-      },
-    })
-
-    return transformer
-  }
-
-  static #serializeValue(value: unknown): string {
-    if (value === undefined || value === null) return ''
-
-    if (value instanceof Date && !isNaN(value.getTime())) {
-      return value.toISOString()
-    }
-
-    if (typeof value === 'object') {
-      const string = JSON.stringify(value)
-      return `"${string.replace(/"/g, '""')}"`
-    }
-
-    // At this point value is a primitive (string | number | boolean | bigint | symbol).
-    let strValue: string
-    if (typeof value === 'string') {
-      strValue = value
-    } else {
-      // number | boolean | bigint | symbol — each has a well-defined toString().
-      strValue = (value as number | boolean | bigint | symbol).toString()
-    }
-
-    // COPY CSV treats an unquoted empty field as NULL — quote it so an empty
-    // string stays an empty string instead of becoming NULL.
-    if (strValue === '') {
-      return '""'
-    }
-
-    if (strValue.includes('\t') || strValue.includes('\n') || strValue.includes('"') || strValue.includes('\r')) {
-      return `"${strValue.replace(/"/g, '""')}"`
-    }
-    return strValue
   }
 }
