@@ -1,2 +1,5 @@
 export * from './Cloner'
 export * from './ICloneable'
+export * from './strategy/ICloner'
+export * from './strategy/JSONCloner'
+export * from './strategy/StructuredCloner'

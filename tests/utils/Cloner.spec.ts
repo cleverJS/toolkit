@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { Cloner } from '../../src'
-import { JSONCloner } from '../../src/utils/clone/strategy/JSONCloner'
-import { StructuredCloner } from '../../src/utils/clone/strategy/StructuredCloner'
+// Strategies and the brand are part of the public API — imported from the
+// package root on purpose (they used to be internal-only, making setCloner
+// unusable for consumers).
+import { CLONEABLE, Cloner, ICloneable, JSONCloner, StructuredCloner } from '../../src'
 
 describe('Cloner', () => {
   function cloner(type: 'json' | 'structured') {
-    const instance = Cloner.getInstance()
-    if (type === 'json') {
-      instance.setCloner(new JSONCloner())
-    }
-
-    if (type === 'structured') {
-      instance.setCloner(new StructuredCloner())
-    }
-    return instance
+    return new Cloner(type === 'json' ? new JSONCloner() : new StructuredCloner())
   }
 
   it('should keep Date type with StructuredCloner', () => {
@@ -76,5 +69,64 @@ describe('Cloner', () => {
     // structuredClone converts Buffer to Uint8Array
     expect(cloned).toBeInstanceOf(Uint8Array)
     expect(new Uint8Array(cloned)).toEqual(new Uint8Array([1, 2, 3]))
+  })
+
+  it('should accept a strategy via constructor without touching the shared singleton', () => {
+    const jsonInstance = new Cloner(new JSONCloner())
+    const shared = Cloner.getInstance()
+
+    const item = { date: new Date(), set: new Set([1]) }
+    const fromInjected = jsonInstance.clone(item)
+    const fromShared = shared.clone(item)
+
+    expect(fromInjected.date).toBeInstanceOf(Date)
+    expect(fromInjected.set).toEqual({}) // JSON.stringify collapses Set — JSON strategy signature
+    expect(fromShared.set).toBeInstanceOf(Set) // structuredClone keeps Set — shared default untouched
+  })
+
+  it('should keep the deprecated setCloner working for existing consumers', () => {
+    const instance = new Cloner()
+    // eslint-disable-next-line sonarjs/deprecation -- back-compat coverage for the deprecated API
+    instance.setCloner(new JSONCloner())
+
+    const clone = instance.clone({ set: new Set([1]) })
+    expect(clone.set).toEqual({}) // JSON strategy took effect
+  })
+
+  it('should default to StructuredCloner when constructed without arguments', () => {
+    const instance = new Cloner()
+    const clone = instance.clone({ set: new Set([1, 2]) })
+    expect(clone.set).toBeInstanceOf(Set)
+    expect(clone.set.size).toBe(2)
+  })
+
+  it('should use clone() of a branded ICloneable implementation', () => {
+    class MyEntity implements ICloneable {
+      readonly [CLONEABLE] = true
+      public constructor(public value: number) {}
+      clone(): this {
+        return new MyEntity(this.value + 100) as this
+      }
+    }
+
+    const clone = cloner('structured').clone(new MyEntity(1))
+    expect(clone).toBeInstanceOf(MyEntity)
+    expect(clone.value).toBe(101)
+  })
+
+  // Regression: any object with a prototype clone() method used to be treated
+  // as ICloneable, silently substituting foreign clone() semantics for a deep
+  // clone (knex QueryBuilder, moment, ...).
+  it('should NOT call clone() of an unbranded object and deep-clone it instead', () => {
+    class QueryBuilderLike {
+      public state = { limit: 10 }
+      clone(): string {
+        return 'hijacked'
+      }
+    }
+
+    const result = cloner('structured').clone(new QueryBuilderLike())
+    expect(result).not.toBe('hijacked')
+    expect(result.state).toEqual({ limit: 10 })
   })
 })

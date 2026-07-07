@@ -599,20 +599,28 @@ const fast = new Paginator({ page: 1, perPage: 25, skipTotal: true })
 
 ### Cloner
 
-Deep cloning with strategy pattern. Default strategy uses `structuredClone()`. Supports custom clone logic via `ICloneable` interface.
+Deep cloning with strategy pattern. Default strategy uses `structuredClone()`; `JSONCloner` (JSON round-trip with Date/Buffer restoration) is available as an alternative. Supports custom clone logic via the `ICloneable` interface.
 
 ```typescript
-import { Cloner } from '@cleverjs/toolkit'
+import { Cloner, JSONCloner } from '@cleverjs/toolkit'
 
-const cloner = Cloner.getInstance()
+const cloner = Cloner.getInstance() // shared instance, StructuredCloner strategy
 const copy = cloner.clone({ nested: { date: new Date(), set: new Set([1, 2]) } })
 
-// Custom clone behavior for your classes
-import { ICloneable } from '@cleverjs/toolkit'
+// Need a different strategy? Construct a dedicated instance — don't mutate the
+// shared singleton via setCloner() (deprecated), it affects every consumer.
+const jsonCloner = new Cloner(new JSONCloner())
+
+// Custom clone behavior for your classes: implement ICloneable and carry the
+// CLONEABLE brand. A bare clone() method is intentionally not enough — that
+// duck-typing used to hijack third-party objects (knex QueryBuilder, moment, ...)
+// whose clone() means something else entirely.
+import { CLONEABLE, ICloneable } from '@cleverjs/toolkit'
 
 class MyEntity implements ICloneable {
-  clone() {
-    return new MyEntity(/* custom logic */)
+  readonly [CLONEABLE] = true
+  clone(): this {
+    return new MyEntity(/* custom logic */) as this
   }
 }
 ```

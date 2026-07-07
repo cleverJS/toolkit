@@ -1,39 +1,14 @@
-import { isInstanceOf } from '../helpers/type-guards'
+import { CLONEABLE, ICloneable } from './ICloneable'
 
-import { ICloneable } from './ICloneable'
-
-export function getOwnMethodNames(obj: any) {
-  const prototypeFields: Set<string> = new Set([
-    'constructor',
-    '__defineGetter__',
-    '__defineSetter__',
-    'hasOwnProperty',
-    '__lookupGetter__',
-    '__lookupSetter__',
-    'isPrototypeOf',
-    'propertyIsEnumerable',
-    'toString',
-    'valueOf',
-    '__proto__',
-    'toLocaleString',
-  ])
-  const methods = new Set()
-
-  while ((obj = Reflect.getPrototypeOf(obj))) {
-    const keys = Reflect.ownKeys(obj)
-    for (const key of keys) {
-      if (!prototypeFields.has(key.toString())) {
-        methods.add(key)
-      }
-    }
+/**
+ * True when the object explicitly opted into custom cloning by carrying the
+ * {@link CLONEABLE} brand alongside a `clone()` function. A bare `clone()`
+ * method is deliberately NOT enough — see the brand's doc for the rationale.
+ */
+export function isInstanceOfICloneable(object: unknown): object is ICloneable {
+  if (object == null || (typeof object !== 'object' && typeof object !== 'function')) {
+    return false
   }
-
-  return methods
-}
-
-export function isInstanceOfICloneable(object: any): object is ICloneable {
-  return isInstanceOf<ICloneable>(object, (item: any) => {
-    const methods = getOwnMethodNames(item)
-    return methods.has('clone')
-  })
+  const candidate = object as { [CLONEABLE]?: unknown; clone?: unknown }
+  return candidate[CLONEABLE] === true && typeof candidate.clone === 'function'
 }

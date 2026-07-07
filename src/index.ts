@@ -13,7 +13,7 @@ export { IConnectionScope, IsolationLevel, TransactionOptions } from './infrastr
 export { IBulkInsertStrategy, IBulkInsertOptions } from './infrastructure/bulk-insert/IBulkInsertStrategy'
 
 // Utils
-export { Cloner, ICloneable } from './utils/clone'
+export { Cloner, ICloneable, CLONEABLE, ICloner, JSONCloner, StructuredCloner } from './utils/clone'
 export { removeNullish, removeUndefined, getKeyByValue, isEmptyObject, isPlainObject, intersect } from './utils/helpers/object'
 export { Paginator, IPaginatorOptions } from './utils/Paginator'
 export { peekAndReplayStream } from './utils/helpers/streams'

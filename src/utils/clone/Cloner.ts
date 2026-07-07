@@ -6,12 +6,14 @@ import { StructuredCloner } from './strategy/StructuredCloner'
 
 export class Cloner {
   private static instance: Cloner
-  private cloner: ICloner
 
-  private constructor() {
-    this.cloner = new StructuredCloner()
-  }
+  public constructor(private cloner: ICloner = new StructuredCloner()) {}
 
+  /**
+   * Shared default instance (StructuredCloner strategy). For a different
+   * strategy prefer a dedicated `new Cloner(strategy)` over mutating this
+   * shared instance via {@link setCloner}.
+   */
   public static getInstance(): Cloner {
     // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
     if (!Cloner.instance) {
@@ -37,6 +39,11 @@ export class Cloner {
     return true
   }
 
+  /**
+   * @deprecated Swapping the strategy on the shared `getInstance()` singleton
+   * silently affects every consumer in the process. Construct a dedicated
+   * `new Cloner(strategy)` instead.
+   */
   public setCloner(cloner: ICloner) {
     this.cloner = cloner
   }

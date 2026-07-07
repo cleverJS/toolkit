@@ -1,41 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { getOwnMethodNames, isInstanceOfICloneable } from '../../src/utils/clone/reflect'
-
-describe('getOwnMethodNames', () => {
-  it('should return method names from prototype chain', () => {
-    class Foo {
-      bar() {}
-      baz() {}
-    }
-    const methods = getOwnMethodNames(new Foo())
-    expect(methods.has('bar')).toBe(true)
-    expect(methods.has('baz')).toBe(true)
-  })
-
-  it('should exclude standard prototype fields', () => {
-    const methods = getOwnMethodNames({})
-    expect(methods.has('constructor')).toBe(false)
-    expect(methods.has('toString')).toBe(false)
-    expect(methods.has('hasOwnProperty')).toBe(false)
-  })
-
-  it('should collect methods from inheritance chain', () => {
-    class Base {
-      baseMethod() {}
-    }
-    class Child extends Base {
-      childMethod() {}
-    }
-    const methods = getOwnMethodNames(new Child())
-    expect(methods.has('baseMethod')).toBe(true)
-    expect(methods.has('childMethod')).toBe(true)
-  })
-})
+import { CLONEABLE } from '../../src'
+import { isInstanceOfICloneable } from '../../src/utils/clone/reflect'
 
 describe('isInstanceOfICloneable', () => {
-  it('should return true for class implementing clone via prototype', () => {
+  it('should return true for a branded class with clone()', () => {
     class MyCloneable {
+      readonly [CLONEABLE] = true
       clone() {
         return new MyCloneable()
       }
@@ -43,17 +14,41 @@ describe('isInstanceOfICloneable', () => {
     expect(isInstanceOfICloneable(new MyCloneable())).toBe(true)
   })
 
-  it('should return false for plain object with clone as own property', () => {
-    // getOwnMethodNames walks the prototype chain, not own properties
+  it('should return true for a branded plain object with clone()', () => {
     const obj = {
+      [CLONEABLE]: true as const,
       clone() {
         return this
       },
     }
-    expect(isInstanceOfICloneable(obj)).toBe(false)
+    expect(isInstanceOfICloneable(obj)).toBe(true)
   })
 
-  it('should return false for object without clone method', () => {
+  // Regression: detection used to duck-type on a `clone()` method anywhere in
+  // the prototype chain, hijacking third-party objects (knex QueryBuilder,
+  // moment, ...) whose clone() has entirely different semantics.
+  it('should return false for an unbranded class with clone()', () => {
+    class QueryBuilderLike {
+      clone() {
+        return 'not a deep clone'
+      }
+    }
+    expect(isInstanceOfICloneable(new QueryBuilderLike())).toBe(false)
+  })
+
+  it('should return false when the brand is present but clone is not a function', () => {
+    expect(isInstanceOfICloneable({ [CLONEABLE]: true, clone: 42 })).toBe(false)
+  })
+
+  it('should return false when the brand value is not exactly true', () => {
+    expect(isInstanceOfICloneable({ [CLONEABLE]: 1, clone: () => ({}) })).toBe(false)
+  })
+
+  it('should return false for objects without clone, primitives, and nullish', () => {
     expect(isInstanceOfICloneable({ a: 1 })).toBe(false)
+    expect(isInstanceOfICloneable(null)).toBe(false)
+    expect(isInstanceOfICloneable(undefined)).toBe(false)
+    expect(isInstanceOfICloneable('clone')).toBe(false)
+    expect(isInstanceOfICloneable(42)).toBe(false)
   })
 })

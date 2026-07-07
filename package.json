@@ -1,6 +1,6 @@
 {
   "name": "@cleverjs/toolkit",
-  "version": "2.2.1",
+  "version": "3.0.0",
   "description": "TypeScript toolkit with utilities, helpers, and MikroORM repository patterns for building applications",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",

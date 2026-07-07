@@ -343,21 +343,28 @@ new KyselyMssqlSchemaInspector(kysely).inspect('dbo.MyTable')
 
 ## 4. Cloner (deep clone)
 
-Singleton facade with pluggable strategy.
+Facade with pluggable strategy. Construct with a strategy or use the shared singleton.
 
 ```ts
 class Cloner {
-  static getInstance(): Cloner
+  constructor(cloner?: ICloner)               // default: StructuredCloner
+  static getInstance(): Cloner                // shared instance (StructuredCloner)
   static isCloneable(obj: unknown): boolean   // false for streams, WeakMap, WeakSet, functions
-  setCloner(cloner: ICloner): void            // swap strategy
-  clone<T>(data: T): T                        // ICloneable.clone() if present, else strategy
+  /** @deprecated — construct `new Cloner(strategy)` instead of mutating the shared instance */
+  setCloner(cloner: ICloner): void
+  clone<T>(data: T): T                        // branded ICloneable.clone() if present, else strategy
 }
 
 interface ICloner { clone<T>(data: T): T }
-interface ICloneable { clone(nextData?: any): this }
+
+const CLONEABLE: unique symbol               // Symbol.for('@cleverjs/toolkit:cloneable')
+interface ICloneable {
+  readonly [CLONEABLE]: true                 // explicit opt-in brand — a bare clone() method is not detected
+  clone(nextData?: any): this
+}
 ```
 
-Built-in strategies:
+Built-in strategies (all exported):
 - **`StructuredCloner`** (default) — uses native `structuredClone()`.
 - **`JSONCloner`** — `JSON.parse(JSON.stringify())` with Date/Buffer restoration.
 
