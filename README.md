@@ -22,7 +22,7 @@ pnpm add @cleverjs/toolkit
 
 ### Peer Dependencies
 
-All peer dependencies are **optional** — install only what you need. This enables tree-shaking so projects using only utilities don't pull in ORM packages.
+Every peer dependency except `@cleverjs/condition-builder` is **optional** — install only what you need. Projects using only the utilities pull in no ORM or driver packages, and database drivers are loaded on first use rather than at import (see [Export Subpaths](#export-subpaths)), so an MSSQL driver is never required by a Postgres-only service.
 
 **For Knex repositories:**
 
@@ -51,7 +51,7 @@ The Mikro-side `PostgresCopyBulkInsertStrategy` takes a `pg.Pool` directly so th
 **For SQL Server bulk insert (TDS BulkLoad):**
 
 ```bash
-pnpm add tedious
+pnpm add tedious    # v19 or v20; @mikro-orm/mssql brings v20
 ```
 
 The Mikro-side `MssqlBulkLoadBulkInsertStrategy` takes a caller-managed `ITediousConnectionFactory`; you control connection lifecycle (pool or per-call).
@@ -676,14 +676,18 @@ Also exported: `getKeyByValue`, `TClass`, `PropertySchema`, and type guard helpe
 
 ## Export Subpaths
 
-Engine-bound code is split into per-engine subpaths so each peer dependency stays truly optional — the root entry never `require()`s `@mikro-orm/core`, `knex`, `tedious`, `pg`, `pg-copy-streams`, or `kysely`.
+Engine-bound code is split into per-engine subpaths so each peer dependency stays truly optional.
 
-| Subpath | Contents | Required peers |
-|---|---|---|
-| `@cleverjs/toolkit` | Engine-agnostic: `IRepository`, `IConnectionScope`, `IBulkInsertStrategy` (contract), `FieldMapper`, `IdentityMapper`, `MikroFieldMapper`, `MikroIdentityMapper`, `Paginator`, `Cloner`, helpers, type guards, `listWithPagination` | none |
-| `@cleverjs/toolkit/knex` | `KnexRepository`, `KnexConnectionScope`, `PostgresBulkInsertStrategy`, `MssqlBulkInsertStrategy`, `FallbackBulkInsertStrategy`, `MssqlSchemaInspector`, `resolveBulkInsertStrategy`, `resolveTediousDataType` | `knex` (+ `pg`/`pg-copy-streams` for postgres bulk, `tedious` for mssql bulk) |
-| `@cleverjs/toolkit/mikro` | `MikroRepository`, `MikroConnectionScope`, `KyselyChunkedBulkInsertStrategy`, `PostgresCopyBulkInsertStrategy`, `MssqlBulkLoadBulkInsertStrategy`, `KyselyMssqlSchemaInspector`, `detectKyselyDialect`, `resolveMikroBulkInsertStrategy` | `@mikro-orm/core`, `kysely` (+ `pg`/`pg-copy-streams` for postgres COPY, `tedious` for mssql BulkLoad) |
-| `@cleverjs/toolkit/objects` | Object helpers only (`removeNullish`, `removeUndefined`, etc.) | none |
+| Subpath | Contents | Required at import | Required at call |
+|---|---|---|---|
+| `@cleverjs/toolkit` | Engine-agnostic: `IRepository`, `IConnectionScope`, `IBulkInsertStrategy` (contract), `FieldMapper`, `IdentityMapper`, `MikroFieldMapper`, `MikroIdentityMapper`, `Paginator`, `Cloner`, helpers, type guards, `listWithPagination` | none | none |
+| `@cleverjs/toolkit/knex` | `KnexRepository`, `KnexConnectionScope`, `PostgresBulkInsertStrategy`, `MssqlBulkInsertStrategy`, `FallbackBulkInsertStrategy`, `MssqlSchemaInspector`, `resolveBulkInsertStrategy`, `resolveTediousDataType` | none | `knex` (you construct it); `pg-copy-streams` for postgres bulk, `tedious` for mssql bulk |
+| `@cleverjs/toolkit/mikro` | `MikroRepository`, `MikroConnectionScope`, `KyselyChunkedBulkInsertStrategy`, `PostgresCopyBulkInsertStrategy`, `MssqlBulkLoadBulkInsertStrategy`, `KyselyMssqlSchemaInspector`, `detectKyselyDialect`, `resolveMikroBulkInsertStrategy` | `@mikro-orm/core`, `kysely` | `pg-copy-streams` for postgres COPY, `tedious` for mssql BulkLoad |
+| `@cleverjs/toolkit/objects` | Object helpers only (`removeNullish`, `removeUndefined`, etc.) | none | none |
+
+**Import-time vs. call-time.** Only `/mikro` has load-time peers, and only the two that are structurally part of it: MikroORM's `EntityManager` and the Kysely query builder it exposes via `em.getKysely()`. Every *driver* peer — `tedious`, `pg`, `pg-copy-streams` — is resolved on first use inside the strategy that needs it, so a Postgres-only service can import `/mikro` without an MSSQL driver installed, and an MSSQL-only service can import it without `pg-copy-streams`. Reaching a driver-backed code path without its peer throws a message naming the feature and the install command instead of a bare `MODULE_NOT_FOUND` pointing at package internals.
+
+This is a contract, not a convention: `pnpm check:peers` loads every built entry with each optional peer's resolution forced to fail and asserts the matrix above. It runs in CI after the build, because a single top-level value import anywhere in a barrel's graph silently makes that peer mandatory for every consumer of the entry. When adding an engine-bound module, load its driver through `loadOptionalPeer` (`src/infrastructure/bulk-insert/shared/optionalPeer.ts`) and keep type-only imports written as `import type`.
 
 ## License
 

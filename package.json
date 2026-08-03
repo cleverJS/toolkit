@@ -1,6 +1,6 @@
 {
   "name": "@cleverjs/toolkit",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "TypeScript toolkit with utilities, helpers, and MikroORM repository patterns for building applications",
   "main": "dist/index.js",
   "types": "dist/types/index.d.ts",
@@ -8,6 +8,7 @@
     "build": "swc ./src -d ./dist --strip-leading-paths --source-maps && tsc -p tsconfig.build.json --emitDeclarationOnly",
     "prebuild": "pnpm clean",
     "clean": "rm -rf dist tsconfig.build.tsbuildinfo",
+    "check:peers": "node scripts/check-optional-peers.js",
     "prepublishOnly": "npm run build",
     "tests": "vitest --config vitest.config.ts",
     "test-coverage": "vitest run --coverage --config vitest.config.ts"
@@ -44,9 +45,15 @@
   },
   "typesVersions": {
     "*": {
-      "knex": ["dist/types/knex.d.ts"],
-      "mikro": ["dist/types/mikro.d.ts"],
-      "objects": ["dist/types/objects.d.ts"]
+      "knex": [
+        "dist/types/knex.d.ts"
+      ],
+      "mikro": [
+        "dist/types/mikro.d.ts"
+      ],
+      "objects": [
+        "dist/types/objects.d.ts"
+      ]
     }
   },
   "files": [
@@ -77,12 +84,13 @@
   "license": "MIT",
   "type": "commonjs",
   "peerDependencies": {
-    "@cleverjs/condition-builder": "^1.1.0",
+    "@cleverjs/condition-builder": "^1.1.0 || ^2.0.0",
     "@mikro-orm/core": "^7.0.0",
     "knex": "^3.0.0",
+    "kysely": ">=0.27.0",
     "pg": "^8.0.0",
     "pg-copy-streams": "^7.0.0",
-    "tedious": "^19.0.0"
+    "tedious": "^19.0.0 || ^20.0.0"
   },
   "peerDependenciesMeta": {
     "@cleverjs/condition-builder": {
@@ -92,6 +100,9 @@
       "optional": true
     },
     "knex": {
+      "optional": true
+    },
+    "kysely": {
       "optional": true
     },
     "pg": {
@@ -108,7 +119,7 @@
     "tslib": "^2.8.1"
   },
   "devDependencies": {
-    "@cleverjs/condition-builder": "^1.1.0",
+    "@cleverjs/condition-builder": "^2.0.0",
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
     "@mikro-orm/core": "^7.1.0",
@@ -139,7 +150,7 @@
     "prettier": "^3.8.1",
     "source-map-support": "^0.5.21",
     "supertest": "^7.2.2",
-    "tedious": "^19.2.1",
+    "tedious": "^20.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",

@@ -8,7 +8,7 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs', 'dist/**', 'node_modules/**', '**/*.md', 'vitest.config.ts'],
+    ignores: ['eslint.config.mjs', 'dist/**', 'node_modules/**', '**/*.md', 'vitest.config.ts', 'scripts/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

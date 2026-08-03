@@ -6,22 +6,8 @@ export { MssqlSchemaInspector, IMssqlSchemaInspector, IMssqlColumnDescriptor, IT
 export { resolveTediousDataType, TediousDataType } from './knex/mssql/sqlTypeMap'
 export { resolveBulkInsertStrategy } from './resolveBulkInsertStrategy'
 
-// MikroRepository-side strategies (use Kysely + caller-managed driver resources).
-// For the Knex-based strategies above (used by KnexRepository), see `IBulkInsertStrategy`.
-export {
-  IMikroBulkInsertContext,
-  IMikroBulkInsertStrategy,
-  KyselyChunkedBulkInsertStrategy,
-  PostgresCopyBulkInsertStrategy,
-  IPostgresCopyOptions,
-  IPgPoolLike,
-  MssqlBulkLoadBulkInsertStrategy,
-  IMssqlBulkLoadOptions,
-  ITediousConnection,
-  ITediousConnectionFactory,
-  KyselyMssqlSchemaInspector,
-  detectKyselyDialect,
-  KyselyDialect,
-  resolveMikroBulkInsertStrategy,
-  IMikroBulkInsertResolverDeps,
-} from './mikro'
+// The MikroRepository-side strategies are deliberately NOT re-exported here. They
+// value-import `kysely`, and this barrel is on the `/knex` entry's graph via
+// `Knex.repository` — re-exporting them made a knex-only consumer load Kysely (and
+// everything else the Mikro strategies touch) just to import `@cleverjs/toolkit/knex`.
+// Engine-specific strategies stay behind their own entry: `./mikro` / `/mikro`.

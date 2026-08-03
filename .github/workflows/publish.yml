@@ -89,6 +89,8 @@ jobs:
           MSSQL_PORT: 1433
       - name: Build package
         run: pnpm run build
+      - name: Verify optional peer dependency contract
+        run: pnpm run check:peers
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

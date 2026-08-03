@@ -1,11 +1,10 @@
-import { Knex } from 'knex'
-import { Client } from 'pg'
-import { from } from 'pg-copy-streams'
+import type { Knex } from 'knex'
+import type { Client } from 'pg'
 import { PassThrough } from 'stream'
 import { pipeline } from 'stream/promises'
 
 import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'
-import { buildCopyFromStdinSql, createTabRowTransform } from '../shared/pgCopyCsv'
+import { buildCopyFromStdinSql, copyFrom, createTabRowTransform } from '../shared/pgCopyCsv'
 
 /**
  * PostgreSQL-specific bulk insert implementation using COPY command.
@@ -23,7 +22,7 @@ export class PostgresBulkInsertStrategy implements IBulkInsertStrategy<Knex> {
     let rowCount = 0
 
     try {
-      const copyStream = connection.query(from(buildCopyFromStdinSql(table, objectToDBmapping)))
+      const copyStream = connection.query(copyFrom()(buildCopyFromStdinSql(table, objectToDBmapping)))
 
       // pipeline (unlike .pipe chains) rejects on a failure in ANY stage —
       // source, transform, or COPY sink — and destroys the whole chain, so

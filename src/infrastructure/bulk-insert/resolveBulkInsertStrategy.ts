@@ -1,4 +1,4 @@
-import { Knex } from 'knex'
+import type { Knex } from 'knex'
 
 import { IBulkInsertStrategy } from './IBulkInsertStrategy'
 import { FallbackBulkInsertStrategy } from './knex/FallbackBulkInsertStrategy'

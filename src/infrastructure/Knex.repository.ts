@@ -1,5 +1,5 @@
 import { AdapterType, Condition, ConditionAdapterRegistry, KnexConditionApplier } from '@cleverjs/condition-builder'
-import { Knex } from 'knex'
+import type { Knex } from 'knex'
 import { PassThrough, pipeline, Transform } from 'stream'
 
 import { isPlainObject, removeUndefined } from '../utils/helpers/object'

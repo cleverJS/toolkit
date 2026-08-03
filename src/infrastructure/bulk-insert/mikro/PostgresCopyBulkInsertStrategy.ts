@@ -1,8 +1,7 @@
-import { from as copyFrom } from 'pg-copy-streams'
 import { PassThrough } from 'stream'
 import { pipeline } from 'stream/promises'
 
-import { buildCopyFromStdinSql, createTabRowTransform } from '../shared/pgCopyCsv'
+import { buildCopyFromStdinSql, copyFrom, createTabRowTransform } from '../shared/pgCopyCsv'
 
 import { IMikroBulkInsertContext, IMikroBulkInsertStrategy } from './IMikroBulkInsertStrategy'
 import { KyselyChunkedBulkInsertStrategy } from './KyselyChunkedBulkInsertStrategy'
@@ -97,7 +96,7 @@ export class PostgresCopyBulkInsertStrategy implements IMikroBulkInsertStrategy 
     try {
       // pg-copy-streams expects a Writable that pg.Client.query understands —
       // typed loosely because we treat `pg` as an optional peer dep.
-      const copyStream = client.query(copyFrom(buildCopyFromStdinSql(table, objectToDBmapping)))
+      const copyStream = client.query(copyFrom()(buildCopyFromStdinSql(table, objectToDBmapping)))
 
       // pipeline (unlike .pipe chains) rejects on a failure in ANY stage —
       // source, transform, or COPY sink — and destroys the whole chain, so

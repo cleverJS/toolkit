@@ -1,4 +1,4 @@
-import { Kysely } from 'kysely'
+import type { Kysely } from 'kysely'
 
 export type KyselyDialect = 'postgres' | 'mssql' | 'mysql' | 'sqlite' | 'unknown'
 

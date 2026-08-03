@@ -1,4 +1,4 @@
-import { Knex } from 'knex'
+import type { Knex } from 'knex'
 import { PassThrough } from 'stream'
 
 import { IBulkInsertOptions, IBulkInsertStrategy } from '../IBulkInsertStrategy'

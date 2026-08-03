@@ -1,4 +1,4 @@
-import { Knex } from 'knex'
+import type { Knex } from 'knex'
 import { PassThrough } from 'stream'
 
 import { peekAndReplayStream } from '../../../utils/helpers/streams'

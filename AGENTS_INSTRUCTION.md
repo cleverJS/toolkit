@@ -12,10 +12,10 @@ TypeScript library: generic Repository pattern, bulk insert strategies, connecti
 // Engine-agnostic core: interfaces, mappers, utilities, IBulkInsertStrategy contract
 import { IRepository, IConnectionScope, FieldMapper, IdentityMapper, Paginator, ... } from '@cleverjs/toolkit'
 
-// Knex-backed repository, scope, and bulk insert strategies (requires peers: knex, pg, pg-copy-streams, tedious)
+// Knex-backed repository, scope, and bulk insert strategies (no load-time peers; drivers loaded on use)
 import { KnexRepository, KnexConnectionScope, resolveBulkInsertStrategy, ... } from '@cleverjs/toolkit/knex'
 
-// MikroORM-backed repository, scope, and Kysely-based bulk insert strategies (requires peers: @mikro-orm/core, kysely)
+// MikroORM-backed repository, scope, and Kysely-based bulk insert strategies (load-time peers: @mikro-orm/core, kysely)
 import { MikroRepository, MikroConnectionScope, resolveMikroBulkInsertStrategy, ... } from '@cleverjs/toolkit/mikro'
 
 // Object helpers only
@@ -515,15 +515,21 @@ await scope.transaction(async () => {
 
 ---
 
-## Peer dependencies (all optional)
+## Peer dependencies
+
+All optional except `@cleverjs/condition-builder`.
+
+**Load-time vs. call-time.** Only `/mikro` requires peers to import at all: `@mikro-orm/core` and `kysely`. Driver peers (`tedious`, `pg`, `pg-copy-streams`) are resolved on first use inside the strategy that needs them — so importing `/knex` or `/mikro` never forces a driver you do not use, and a Postgres-only service needs no MSSQL driver. Hitting a driver-backed path without its peer throws `"<feature> requires the optional peer dependency '<pkg>', which is not installed. Install it: pnpm add <pkg>"`.
+
+When adding engine-bound code: load drivers via `loadOptionalPeer(name, feature, () => require(name))` from `src/infrastructure/bulk-insert/shared/optionalPeer.ts`, write type-only peer imports as `import type`, and never re-export an engine's modules from a barrel another engine's entry reaches. `pnpm build && pnpm check:peers` enforces this.
 
 | Dependency | Required for |
 |---|---|
-| `@cleverjs/condition-builder` | Condition-based queries in repositories. Register `KyselyConditionAdapter` (`AdapterType.KYSELY`) for `MikroRepository.stream()`. |
+| `@cleverjs/condition-builder` | Condition-based queries in repositories. Register `KyselyConditionAdapter` (`AdapterType.KYSELY`) for `MikroRepository.stream()`. **Not optional.** |
 | `@mikro-orm/core` (v7+) | `MikroRepository`, `MikroConnectionScope` |
 | `@mikro-orm/decorators` | Optional. Only if you choose decorator-based entities instead of the recommended `defineEntity()` from `@mikro-orm/core`. `/legacy` = TS experimental (needs `reflect-metadata`); `/es` = stage-3 standard. |
-| `kysely` | Runtime query builder used by MikroORM v7 and by the Mikro-side bulk insert strategies |
+| `kysely` (>=0.27) | Runtime query builder used by MikroORM v7 and by the Mikro-side bulk insert strategies. Required to import `/mikro`. |
 | `knex` | `KnexRepository`, `KnexConnectionScope`, knex-side bulk insert strategies |
 | `pg` | PostgreSQL driver — shared between MikroORM (via `new PostgresDialect({ pool })`) and `PostgresCopyBulkInsertStrategy` |
 | `pg-copy-streams` | `PostgresBulkInsertStrategy` (knex) / `PostgresCopyBulkInsertStrategy` (Mikro) |
-| `tedious` | MSSQL driver — `MssqlBulkInsertStrategy` (knex) and `MssqlBulkLoadBulkInsertStrategy` (Mikro) |
+| `tedious` (v19 or v20) | MSSQL driver — `MssqlBulkInsertStrategy` (knex) and `MssqlBulkLoadBulkInsertStrategy` (Mikro). Loaded on first MSSQL bulk insert, not at import. |

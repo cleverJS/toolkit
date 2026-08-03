@@ -2,7 +2,7 @@ import { AdapterType, Condition, ConditionAdapterRegistry, KyselyConditionApplie
 import { BaseEntity, EntityDTO, EntityManager, EntityName, EntityRepository, FilterQuery, FromEntityType } from '@mikro-orm/core'
 import type { FindAllOptions } from '@mikro-orm/core/drivers/IDatabaseDriver'
 import type { EntityData } from '@mikro-orm/core/typings'
-import { Kysely, SelectQueryBuilder } from 'kysely'
+import type { Kysely, SelectQueryBuilder } from 'kysely'
 import { PassThrough, pipeline, Transform } from 'stream'
 
 import { isPlainObject, removeUndefined } from '../utils/helpers/object'

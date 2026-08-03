@@ -1,4 +1,7 @@
+import type { from as pgCopyFrom } from 'pg-copy-streams'
 import { Transform } from 'stream'
+
+import { loadOptionalPeer } from './optionalPeer'
 
 /**
  * Shared CSV serialization for the PostgreSQL `COPY ... FROM STDIN` strategies.
@@ -6,6 +9,27 @@ import { Transform } from 'stream'
  * (Mikro/Kysely) must produce byte-identical COPY payloads — this module is
  * the single place that defines the format, so escaping fixes apply to both.
  */
+
+let cachedCopyFrom: typeof pgCopyFrom | undefined
+
+/**
+ * Resolves `pg-copy-streams`' `from()` on first use.
+ *
+ * Both COPY strategies are re-exported by the `/knex` and `/mikro` barrels, so a
+ * top-level value import would make this optional peer mandatory for every consumer
+ * of those entries — including MSSQL-only ones that never run a COPY. See
+ * `loadOptionalPeer`.
+ */
+export function copyFrom(): typeof pgCopyFrom {
+  cachedCopyFrom ??= loadOptionalPeer<{ from: typeof pgCopyFrom }>(
+    'pg-copy-streams',
+    'PostgreSQL COPY bulk insert',
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-return
+    () => require('pg-copy-streams')
+  ).from
+
+  return cachedCopyFrom
+}
 
 /** Escapes a single SQL identifier by quoting and doubling embedded double-quotes. */
 export function escapePgIdentifier(name: string): string {

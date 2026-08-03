@@ -1,4 +1,4 @@
-import { Knex } from 'knex'
+import type { Knex } from 'knex'
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { IConnectionScope, TransactionOptions } from './IConnectionScope'
